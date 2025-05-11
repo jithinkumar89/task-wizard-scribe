@@ -18,17 +18,19 @@ interface ExtractedContent {
 
 // Multiple regex patterns for parsing different formats of step numbers
 const stepNumberPatterns = [
-  /^(\d+(?:\.\d+)*)\.?\s+/, // Standard format: 1., 1.1., etc.
-  /^Step\s+(\d+(?:\.\d+)*)\.?\s+/i, // Format with "Step" prefix: Step 1., Step 1.1., etc.
-  /^(\d+(?:\.\d+)*)\)\s+/, // Format with parenthesis: 1), 1.1), etc.
-  /^[a-zA-Z]?\s*(\d+(?:\.\d+)*)[\.\)]\s+/, // Format with optional letter prefix: a 1), A. 1.1, etc.
-  /^Task\s+(\d+(?:\.\d+)*)\.?\s+/i // Format with "Task" prefix: Task 1., Task 1.1., etc.
+  /^(\d+)\.?\s+/, // Standard format: 1., 2., etc.
+  /^Step\s+(\d+)\.?\s+/i, // Format with "Step" prefix: Step 1., Step 2., etc.
+  /^(\d+)\)\s+/, // Format with parenthesis: 1), 2), etc.
+  /^[a-zA-Z]?\s*(\d+)[\.\)]\s+/, // Format with optional letter prefix: a 1), A. 2, etc.
+  /^Task\s+(\d+)\.?\s+/i, // Format with "Task" prefix: Task 1., Task 2., etc.
+  /^Sl\.\s*No\.\s*(\d+)/i, // Format with "Sl. No." prefix: Sl. No. 1, etc.
+  /^(\d+)\s*[\.\)]\s+/ // Simple number with dot or parenthesis: "1) ", "2. "
 ];
 
 // Process the uploaded Word document
-export const processDocument = async (file: File): Promise<ExtractedContent> => {
+export const processDocument = async (file: File, assemblySequenceId: string = '1'): Promise<ExtractedContent> => {
   try {
-    console.log("Processing document started...");
+    console.log("Processing document started with assembly sequence ID:", assemblySequenceId);
     // Extract HTML content from the docx file
     const result = await mammoth.extractRawText({ 
       arrayBuffer: await file.arrayBuffer() 
@@ -53,7 +55,7 @@ export const processDocument = async (file: File): Promise<ExtractedContent> => 
     console.log("Document title:", docTitle);
     
     // Extract images and their relationships
-    const images = await extractImages(file, imageResult.value);
+    const images = await extractImages(file, imageResult.value, assemblySequenceId);
     console.log(`Extracted ${images.length} images from the document`);
     
     // Try to detect if the document has a table structure
@@ -63,10 +65,10 @@ export const processDocument = async (file: File): Promise<ExtractedContent> => 
     let tasks: Task[] = [];
     if (hasTableStructure) {
       console.log("Detected table structure, extracting tasks from table...");
-      tasks = extractTasksFromTable(result.value, docTitle, images);
+      tasks = extractTasksFromTable(result.value, docTitle, images, assemblySequenceId);
     } else {
       console.log("Using paragraph-based task extraction...");
-      tasks = extractTasks(lines.slice(1), docTitle, images);
+      tasks = extractTasks(lines.slice(1), docTitle, images, assemblySequenceId);
     }
     
     console.log(`Extracted ${tasks.length} tasks from document`);
@@ -74,7 +76,7 @@ export const processDocument = async (file: File): Promise<ExtractedContent> => 
     // If no tasks were found, try a more aggressive approach
     if (tasks.length === 0) {
       console.log("No tasks found with primary method, trying alternative extraction...");
-      tasks = extractTasksAggressively(result.value, docTitle, images);
+      tasks = extractTasksAggressively(result.value, docTitle, images, assemblySequenceId);
       console.log(`Alternative extraction found ${tasks.length} tasks`);
     }
     
@@ -104,10 +106,11 @@ const detectTableStructure = (content: string): boolean => {
 const extractTasks = (
   lines: string[], 
   docTitle: string, 
-  images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>
+  images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>,
+  assemblySequenceId: string = '1'
 ): Task[] => {
   const tasks: Task[] = [];
-  let currentStepNumber = '';
+  let currentTaskIndex = 0;
   let currentTask = '';
   
   for (const line of lines) {
@@ -125,24 +128,26 @@ const extractTasks = (
     
     if (stepMatch) {
       // If we were processing a previous task, save it
-      if (currentStepNumber && currentTask) {
+      if (currentTask) {
+        currentTaskIndex++;
+        const taskNumber = formatTaskNumber(currentTaskIndex.toString(), assemblySequenceId);
+        
         // Find if this step has an associated image
-        const hasImage = images.some(img => img.taskNumber === formatTaskNumber(currentStepNumber));
+        const hasImage = images.some(img => img.taskNumber === taskNumber);
         
         tasks.push({
-          taskNumber: formatTaskNumber(currentStepNumber),
+          taskNumber: taskNumber,
           type: 'Operation',
           etaSec: '',
-          description: docTitle,
+          description: trimmedLine.substring(stepMatch[0].length).trim(),
           activity: currentTask.trim(),
           specification: '',
-          attachment: hasImage ? formatTaskNumber(currentStepNumber) : '',
+          attachment: hasImage ? taskNumber : '',
           hasImage: hasImage
         });
       }
       
       // Start a new task
-      currentStepNumber = stepMatch[1];
       currentTask = trimmedLine.substring(stepMatch[0].length).trim();
     } else {
       // Append to current task description
@@ -153,17 +158,19 @@ const extractTasks = (
   }
   
   // Add the last task if there is one
-  if (currentStepNumber && currentTask) {
-    const hasImage = images.some(img => img.taskNumber === formatTaskNumber(currentStepNumber));
+  if (currentTask) {
+    currentTaskIndex++;
+    const taskNumber = formatTaskNumber(currentTaskIndex.toString(), assemblySequenceId);
+    const hasImage = images.some(img => img.taskNumber === taskNumber);
     
     tasks.push({
-      taskNumber: formatTaskNumber(currentStepNumber),
+      taskNumber: taskNumber,
       type: 'Operation',
       etaSec: '',
-      description: docTitle,
+      description: currentTask.trim(),
       activity: currentTask.trim(),
       specification: '',
-      attachment: hasImage ? formatTaskNumber(currentStepNumber) : '',
+      attachment: hasImage ? taskNumber : '',
       hasImage: hasImage
     });
   }
@@ -175,7 +182,8 @@ const extractTasks = (
 const extractTasksAggressively = (
   content: string,
   docTitle: string,
-  images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>
+  images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>,
+  assemblySequenceId: string = '1'
 ): Task[] => {
   const tasks: Task[] = [];
   
@@ -188,17 +196,21 @@ const extractTasksAggressively = (
     if (paragraph.trim().length < 10 || paragraph.trim() === docTitle) continue;
     
     // Attempt to find a number at the start of the paragraph
-    const numberMatch = paragraph.match(/^\s*(\d+(?:\.\d+)*)/);
-    const stepNumber = numberMatch ? numberMatch[1] : `${taskIndex}`;
+    const numberMatch = paragraph.match(/^\s*(\d+)/);
     
-    const formattedNumber = formatTaskNumber(stepNumber);
+    // If we found a number, use it as the task index, otherwise use incremental index
+    if (numberMatch) {
+      taskIndex = parseInt(numberMatch[1], 10);
+    }
+    
+    const formattedNumber = formatTaskNumber(taskIndex.toString(), assemblySequenceId);
     const hasImage = images.some(img => img.taskNumber === formattedNumber);
     
     tasks.push({
       taskNumber: formattedNumber,
       type: 'Operation',
       etaSec: '',
-      description: docTitle,
+      description: paragraph.trim(),
       activity: paragraph.trim(),
       specification: '',
       attachment: hasImage ? formattedNumber : '',
@@ -215,28 +227,32 @@ const extractTasksAggressively = (
 const extractTasksFromTable = (
   content: string,
   docTitle: string,
-  images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>
+  images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>,
+  assemblySequenceId: string = '1'
 ): Task[] => {
   const tasks: Task[] = [];
   const lines = content.split('\n').filter(line => line.trim().length > 0);
+  let taskIndex = 1;
   
   for (let i = 1; i < lines.length; i++) {  // Skip the first line as it's likely a header
     const line = lines[i].trim();
     
     // Look for a number at the beginning of the line
-    const match = line.match(/^\s*(\d+(?:\.\d+)*)/);
+    const match = line.match(/^\s*(\d+)/);
     if (match) {
-      const stepNumber = match[1];
+      const stepNumber = parseInt(match[1], 10);
+      taskIndex = stepNumber; // Use the found step number as the task index
+      
       const restOfLine = line.substring(match[0].length).trim();
       
-      const formattedNumber = formatTaskNumber(stepNumber);
+      const formattedNumber = formatTaskNumber(taskIndex.toString(), assemblySequenceId);
       const hasImage = images.some(img => img.taskNumber === formattedNumber);
       
       tasks.push({
         taskNumber: formattedNumber,
         type: 'Operation',
         etaSec: '',
-        description: docTitle,
+        description: restOfLine,
         activity: restOfLine,
         specification: '',
         attachment: hasImage ? formattedNumber : '',
@@ -248,25 +264,21 @@ const extractTasksFromTable = (
   return tasks;
 };
 
-// Format the task number as required (e.g., 1.2.3 -> 1-2-03)
-const formatTaskNumber = (stepNumber: string): string => {
-  const parts = stepNumber.split('.');
+// Format the task number as required (e.g., for assembly ID 1, task 1 becomes 1-0-001)
+const formatTaskNumber = (stepNumber: string, assemblySequenceId: string = '1'): string => {
+  // Convert the step number to a three-digit format with leading zeros
+  const formattedStepNumber = stepNumber.padStart(3, '0');
   
-  if (parts.length === 1) {
-    return `${parts[0]}-0-00`;
-  } else if (parts.length === 2) {
-    return `${parts[0]}-${parts[1]}-00`;
-  } else if (parts.length >= 3) {
-    // Pad the last number with leading zeros if needed
-    const lastPart = parts[2].padStart(2, '0');
-    return `${parts[0]}-${parts[1]}-${lastPart}`;
-  }
-  
-  return stepNumber;
+  // Return in the format: assemblySequenceId-0-formattedStepNumber
+  return `${assemblySequenceId}-0-${formattedStepNumber}`;
 };
 
 // Extract images from the document
-const extractImages = async (file: File, htmlContent: string): Promise<Array<{ taskNumber: string; imageData: Blob; contentType: string }>> => {
+const extractImages = async (
+  file: File, 
+  htmlContent: string, 
+  assemblySequenceId: string = '1'
+): Promise<Array<{ taskNumber: string; imageData: Blob; contentType: string }>> => {
   try {
     const zip = new JSZip();
     await zip.loadAsync(await file.arrayBuffer());
@@ -317,6 +329,7 @@ const extractImages = async (file: File, htmlContent: string): Promise<Array<{ t
     
     // Map for storing the last encountered step number
     let lastStepNumber = "1";
+    let imageIndex = 1;
     
     for (let i = 0; i < imageSections.length; i++) {
       const section = imageSections[i];
@@ -330,7 +343,8 @@ const extractImages = async (file: File, htmlContent: string): Promise<Array<{ t
         }
       }
       
-      const formattedTaskNumber = formatTaskNumber(lastStepNumber);
+      // Format the task number based on the assembly sequence ID and step number
+      const taskNumber = formatTaskNumber(lastStepNumber, assemblySequenceId);
       
       // Look for image tags
       let imgMatch;
@@ -343,7 +357,7 @@ const extractImages = async (file: File, htmlContent: string): Promise<Array<{ t
         for (const [imageName, imageInfo] of Object.entries(imageFiles)) {
           if (imageName.includes(imgRelId)) {
             images.push({
-              taskNumber: formattedTaskNumber,
+              taskNumber: taskNumber,
               imageData: imageInfo.data,
               contentType: imageInfo.contentType
             });
@@ -357,14 +371,13 @@ const extractImages = async (file: File, htmlContent: string): Promise<Array<{ t
     // just assign images sequentially to tasks
     if (images.length === 0 && Object.keys(imageFiles).length > 0) {
       console.log("Using sequential image assignment as fallback");
-      let taskIndex = 1;
       for (const [imageName, imageInfo] of Object.entries(imageFiles)) {
         images.push({
-          taskNumber: formatTaskNumber(String(taskIndex)),
+          taskNumber: formatTaskNumber(imageIndex.toString(), assemblySequenceId),
           imageData: imageInfo.data,
           contentType: imageInfo.contentType
         });
-        taskIndex++;
+        imageIndex++;
       }
     }
     
@@ -481,5 +494,7 @@ export const createDownloadPackage = async (
   }
   
   // Generate the zip file and return it as a Blob
-  return await zip.generateAsync({ type: "blob" }) as Blob;
+  const zipBlob = await zip.generateAsync({ type: "blob" });
+  return zipBlob;
 };
+
