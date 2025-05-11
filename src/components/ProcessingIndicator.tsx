@@ -29,6 +29,12 @@ const ProcessingIndicator = ({ status, progress, error }: ProcessingIndicatorPro
     }
   };
 
+  const getProgressColor = () => {
+    if (status === 'complete') return 'bg-green-500';
+    if (status === 'error') return 'bg-red-500';
+    return 'bg-sop-blue';
+  };
+
   return (
     <div className="w-full p-6 bg-white rounded-lg shadow-sm">
       <div className="flex items-center mb-4">
@@ -42,15 +48,12 @@ const ProcessingIndicator = ({ status, progress, error }: ProcessingIndicatorPro
         <h3 className="text-lg font-medium">{getStatusText()}</h3>
       </div>
       
-      <Progress 
-        value={progress} 
-        className="h-2 mb-2"
-        indicatorClassName={
-          status === 'complete' ? 'bg-green-500' : 
-          status === 'error' ? 'bg-red-500' :
-          'bg-sop-blue'
-        }
-      />
+      <div className="relative w-full h-2 mb-2 bg-gray-200 rounded-full overflow-hidden">
+        <div 
+          className={`absolute top-0 left-0 h-full ${getProgressColor()} transition-all duration-300`}
+          style={{ width: `${progress}%` }}
+        />
+      </div>
       
       <div className="text-sm text-gray-500">
         {status === 'error' ? (

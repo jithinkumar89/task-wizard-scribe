@@ -1,7 +1,7 @@
 
 import * as mammoth from 'mammoth';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from 'docx';
-import * as JSZip from 'jszip';
+import JSZip from 'jszip'; // Changed import statement
 import { saveAs } from 'file-saver';
 import { Task } from '@/components/TaskPreview';
 
@@ -138,12 +138,12 @@ const formatTaskNumber = (stepNumber: string): string => {
 
 // Extract images from the document
 const extractImages = async (file: File, htmlContent: string): Promise<Array<{ taskNumber: string; imageData: Blob; contentType: string }>> => {
-  const zip = new JSZip();
-  const content = await zip.loadAsync(await file.arrayBuffer());
+  const zip = new JSZip(); // Fixed constructor usage
+  await zip.loadAsync(await file.arrayBuffer());
   
   // Load the document.xml to identify image relationships
-  const documentXml = await content.file('word/document.xml')?.async('text');
-  const relationshipsXml = await content.file('word/_rels/document.xml.rels')?.async('text');
+  const documentXml = await zip.file('word/document.xml')?.async('text');
+  const relationshipsXml = await zip.file('word/_rels/document.xml.rels')?.async('text');
   
   if (!documentXml || !relationshipsXml) {
     throw new Error('Invalid DOCX file structure');
@@ -180,7 +180,7 @@ const extractImages = async (file: File, htmlContent: string): Promise<Array<{ t
       
       if (imgRelId) {
         // Find the image file in the zip
-        for (const [filePath, fileObj] of Object.entries(content.files)) {
+        for (const [filePath, fileObj] of Object.entries(zip.files)) {
           if (filePath.startsWith('word/media/') && filePath.includes(imgRelId)) {
             const imageData = await fileObj.async('blob');
             const contentType = getContentTypeFromPath(filePath);
@@ -305,6 +305,6 @@ export const createDownloadPackage = async (
     });
   }
   
-  // Generate the zip file
+  // Generate the zip file and return it directly as a Blob
   return await zip.generateAsync({ type: "blob" });
 };
