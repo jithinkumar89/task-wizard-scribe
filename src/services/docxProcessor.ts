@@ -16,13 +16,19 @@ interface ExtractedContent {
   }>;
 }
 
-// Regex patterns for parsing
-const stepNumberRegex = /^(\d+(?:\.\d+)*)\.?\s+/;
-const imageRelationshipRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
+// Multiple regex patterns for parsing different formats of step numbers
+const stepNumberPatterns = [
+  /^(\d+(?:\.\d+)*)\.?\s+/, // Standard format: 1., 1.1., etc.
+  /^Step\s+(\d+(?:\.\d+)*)\.?\s+/i, // Format with "Step" prefix: Step 1., Step 1.1., etc.
+  /^(\d+(?:\.\d+)*)\)\s+/, // Format with parenthesis: 1), 1.1), etc.
+  /^[a-zA-Z]?\s*(\d+(?:\.\d+)*)[\.\)]\s+/, // Format with optional letter prefix: a 1), A. 1.1, etc.
+  /^Task\s+(\d+(?:\.\d+)*)\.?\s+/i // Format with "Task" prefix: Task 1., Task 1.1., etc.
+];
 
 // Process the uploaded Word document
 export const processDocument = async (file: File): Promise<ExtractedContent> => {
   try {
+    console.log("Processing document started...");
     // Extract HTML content from the docx file
     const result = await mammoth.extractRawText({ 
       arrayBuffer: await file.arrayBuffer() 
@@ -33,17 +39,44 @@ export const processDocument = async (file: File): Promise<ExtractedContent> => 
       arrayBuffer: await file.arrayBuffer()
     });
 
+    console.log("Document text extracted successfully");
+    
     // Process raw document to extract docTitle from first line
-    const lines = result.value.split('\n').filter(line => line.trim() !== '');
+    let lines = result.value.split('\n').filter(line => line.trim() !== '');
+    
+    // Make sure we have some content
+    if (lines.length === 0) {
+      throw new Error("The document appears to be empty. Please check the file content.");
+    }
+    
     const docTitle = lines[0].trim();
+    console.log("Document title:", docTitle);
     
     // Extract images and their relationships
     const images = await extractImages(file, imageResult.value);
+    console.log(`Extracted ${images.length} images from the document`);
     
-    // Extract tasks from the document content
-    const tasks = extractTasks(lines.slice(1), docTitle, images);
+    // Try to detect if the document has a table structure
+    const hasTableStructure = detectTableStructure(result.value);
+    
+    // Extract tasks based on document structure
+    let tasks: Task[] = [];
+    if (hasTableStructure) {
+      console.log("Detected table structure, extracting tasks from table...");
+      tasks = extractTasksFromTable(result.value, docTitle, images);
+    } else {
+      console.log("Using paragraph-based task extraction...");
+      tasks = extractTasks(lines.slice(1), docTitle, images);
+    }
     
     console.log(`Extracted ${tasks.length} tasks from document`);
+    
+    // If no tasks were found, try a more aggressive approach
+    if (tasks.length === 0) {
+      console.log("No tasks found with primary method, trying alternative extraction...");
+      tasks = extractTasksAggressively(result.value, docTitle, images);
+      console.log(`Alternative extraction found ${tasks.length} tasks`);
+    }
     
     return {
       docTitle,
@@ -54,6 +87,17 @@ export const processDocument = async (file: File): Promise<ExtractedContent> => 
     console.error('Error processing document:', error);
     throw new Error('Failed to process the document. Please check the file format.');
   }
+};
+
+// Detect if the document likely has a table structure
+const detectTableStructure = (content: string): boolean => {
+  // Simple heuristic: check for repeated tab or multiple space patterns
+  const tableIndicators = [
+    /\t[^\t]+\t[^\t]+/g,  // Tab separated content
+    /\s{2,}[^\s]+\s{2,}[^\s]+/g  // Space separated (2+ spaces)
+  ];
+  
+  return tableIndicators.some(pattern => pattern.test(content));
 };
 
 // Extract tasks from text content
@@ -72,8 +116,12 @@ const extractTasks = (
     // Skip empty lines
     if (trimmedLine === '') continue;
     
-    // Check if line starts with a step number pattern (e.g., "1.", "1.1.", "1.1.1.")
-    const stepMatch = trimmedLine.match(stepNumberRegex);
+    // Check if line starts with any of the step number patterns
+    let stepMatch = null;
+    for (const pattern of stepNumberPatterns) {
+      stepMatch = trimmedLine.match(pattern);
+      if (stepMatch) break;
+    }
     
     if (stepMatch) {
       // If we were processing a previous task, save it
@@ -86,7 +134,7 @@ const extractTasks = (
           type: 'Operation',
           etaSec: '',
           description: docTitle,
-          activity: currentTask,
+          activity: currentTask.trim(),
           specification: '',
           attachment: hasImage ? formatTaskNumber(currentStepNumber) : '',
           hasImage: hasImage
@@ -98,7 +146,9 @@ const extractTasks = (
       currentTask = trimmedLine.substring(stepMatch[0].length).trim();
     } else {
       // Append to current task description
-      currentTask += ' ' + trimmedLine;
+      if (currentTask) {
+        currentTask += ' ' + trimmedLine;
+      }
     }
   }
   
@@ -111,11 +161,88 @@ const extractTasks = (
       type: 'Operation',
       etaSec: '',
       description: docTitle,
-      activity: currentTask,
+      activity: currentTask.trim(),
       specification: '',
       attachment: hasImage ? formatTaskNumber(currentStepNumber) : '',
       hasImage: hasImage
     });
+  }
+  
+  return tasks;
+};
+
+// More aggressive task extraction method as a fallback
+const extractTasksAggressively = (
+  content: string,
+  docTitle: string,
+  images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>
+): Task[] => {
+  const tasks: Task[] = [];
+  
+  // Split by potential paragraph markers
+  const paragraphs = content.split(/\n\n|\r\n\r\n/).filter(p => p.trim().length > 0);
+  let taskIndex = 1;
+  
+  for (const paragraph of paragraphs) {
+    // Skip very short paragraphs and likely headers
+    if (paragraph.trim().length < 10 || paragraph.trim() === docTitle) continue;
+    
+    // Attempt to find a number at the start of the paragraph
+    const numberMatch = paragraph.match(/^\s*(\d+(?:\.\d+)*)/);
+    const stepNumber = numberMatch ? numberMatch[1] : `${taskIndex}`;
+    
+    const formattedNumber = formatTaskNumber(stepNumber);
+    const hasImage = images.some(img => img.taskNumber === formattedNumber);
+    
+    tasks.push({
+      taskNumber: formattedNumber,
+      type: 'Operation',
+      etaSec: '',
+      description: docTitle,
+      activity: paragraph.trim(),
+      specification: '',
+      attachment: hasImage ? formattedNumber : '',
+      hasImage: hasImage
+    });
+    
+    taskIndex++;
+  }
+  
+  return tasks;
+};
+
+// Extract tasks from table-structured content
+const extractTasksFromTable = (
+  content: string,
+  docTitle: string,
+  images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>
+): Task[] => {
+  const tasks: Task[] = [];
+  const lines = content.split('\n').filter(line => line.trim().length > 0);
+  
+  for (let i = 1; i < lines.length; i++) {  // Skip the first line as it's likely a header
+    const line = lines[i].trim();
+    
+    // Look for a number at the beginning of the line
+    const match = line.match(/^\s*(\d+(?:\.\d+)*)/);
+    if (match) {
+      const stepNumber = match[1];
+      const restOfLine = line.substring(match[0].length).trim();
+      
+      const formattedNumber = formatTaskNumber(stepNumber);
+      const hasImage = images.some(img => img.taskNumber === formattedNumber);
+      
+      tasks.push({
+        taskNumber: formattedNumber,
+        type: 'Operation',
+        etaSec: '',
+        description: docTitle,
+        activity: restOfLine,
+        specification: '',
+        attachment: hasImage ? formattedNumber : '',
+        hasImage: hasImage
+      });
+    }
   }
   
   return tasks;
@@ -140,66 +267,112 @@ const formatTaskNumber = (stepNumber: string): string => {
 
 // Extract images from the document
 const extractImages = async (file: File, htmlContent: string): Promise<Array<{ taskNumber: string; imageData: Blob; contentType: string }>> => {
-  const zip = new JSZip(); // Fixed constructor usage
-  await zip.loadAsync(await file.arrayBuffer());
-  
-  // Load the document.xml to identify image relationships
-  const documentXml = await zip.file('word/document.xml')?.async('text');
-  const relationshipsXml = await zip.file('word/_rels/document.xml.rels')?.async('text');
-  
-  if (!documentXml || !relationshipsXml) {
-    throw new Error('Invalid DOCX file structure');
-  }
-  
-  // Extract image relationships
-  const relationshipsMap = new Map<string, string>();
-  const relationshipRegex = /<Relationship[^>]+Id="([^"]+)"[^>]+Target="([^"]+)"[^>]+Type="[^"]+"[^>]*>/g;
-  let relationshipMatch;
-  
-  while ((relationshipMatch = relationshipRegex.exec(relationshipsXml)) !== null) {
-    relationshipsMap.set(relationshipMatch[1], relationshipMatch[2]);
-  }
-  
-  // Extract images and their associated step numbers from HTML content
-  const images: Array<{ taskNumber: string; imageData: Blob; contentType: string }> = [];
-  const imageSections = htmlContent.split('<p>');
-  
-  for (let i = 0; i < imageSections.length; i++) {
-    const section = imageSections[i];
+  try {
+    const zip = new JSZip();
+    await zip.loadAsync(await file.arrayBuffer());
     
-    // Look for step numbers before images
-    const stepMatch = section.match(stepNumberRegex);
-    if (!stepMatch) continue;
+    console.log("ZIP file loaded successfully");
     
-    const stepNumber = stepMatch[1];
-    const formattedTaskNumber = formatTaskNumber(stepNumber);
+    // Load the document.xml to identify image relationships
+    const documentXml = await zip.file('word/document.xml')?.async('text');
+    const relationshipsXml = await zip.file('word/_rels/document.xml.rels')?.async('text');
     
-    // Look for image tags
-    let imgMatch;
-    while ((imgMatch = imageRelationshipRegex.exec(section)) !== null) {
-      const imgSrc = imgMatch[1];
-      const imgRelId = imgSrc.split('/').pop()?.replace('rId', '');
+    if (!documentXml || !relationshipsXml) {
+      console.warn("Could not find document.xml or relationships file");
+      return [];
+    }
+    
+    // Extract image relationships
+    const relationshipsMap = new Map<string, string>();
+    const relationshipRegex = /<Relationship[^>]+Id="([^"]+)"[^>]+Target="([^"]+)"[^>]+Type="[^"]+"[^>]*>/g;
+    let relationshipMatch;
+    
+    while ((relationshipMatch = relationshipRegex.exec(relationshipsXml)) !== null) {
+      relationshipsMap.set(relationshipMatch[1], relationshipMatch[2]);
+    }
+    
+    // Look for images in the ZIP structure directly
+    const images: Array<{ taskNumber: string; imageData: Blob; contentType: string }> = [];
+    const imageFiles: { [key: string]: { data: Blob, contentType: string } } = {};
+    
+    // First collect all images from word/media
+    for (const [filePath, fileObj] of Object.entries(zip.files)) {
+      if (filePath.startsWith('word/media/') && !fileObj.dir) {
+        try {
+          const imageData = await fileObj.async('blob');
+          const contentType = getContentTypeFromPath(filePath);
+          const imageName = filePath.split('/').pop() || '';
+          imageFiles[imageName] = { data: imageData, contentType };
+        } catch (err) {
+          console.warn(`Failed to extract image from ${filePath}:`, err);
+        }
+      }
+    }
+    
+    console.log(`Found ${Object.keys(imageFiles).length} image files in the document`);
+    
+    // Extract image references and their associated step numbers from HTML content
+    const imageRelationshipRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
+    const imageSections = htmlContent.split('<p>');
+    
+    // Map for storing the last encountered step number
+    let lastStepNumber = "1";
+    
+    for (let i = 0; i < imageSections.length; i++) {
+      const section = imageSections[i];
       
-      if (imgRelId) {
-        // Find the image file in the zip
-        for (const [filePath, fileObj] of Object.entries(zip.files)) {
-          if (filePath.startsWith('word/media/') && filePath.includes(imgRelId)) {
-            const imageData = await fileObj.async('blob');
-            const contentType = getContentTypeFromPath(filePath);
-            
+      // Look for step numbers before images
+      for (const pattern of stepNumberPatterns) {
+        const stepMatch = section.match(pattern);
+        if (stepMatch) {
+          lastStepNumber = stepMatch[1];
+          break;
+        }
+      }
+      
+      const formattedTaskNumber = formatTaskNumber(lastStepNumber);
+      
+      // Look for image tags
+      let imgMatch;
+      while ((imgMatch = imageRelationshipRegex.exec(section)) !== null) {
+        const imgSrc = imgMatch[1];
+        // Extract the file name or relationship ID
+        const imgRelId = imgSrc.split('/').pop()?.replace('rId', '') || '';
+        
+        // Try to find the actual image file
+        for (const [imageName, imageInfo] of Object.entries(imageFiles)) {
+          if (imageName.includes(imgRelId)) {
             images.push({
               taskNumber: formattedTaskNumber,
-              imageData,
-              contentType
+              imageData: imageInfo.data,
+              contentType: imageInfo.contentType
             });
             break;
           }
         }
       }
     }
+    
+    // If we haven't found any images using the relationship method, 
+    // just assign images sequentially to tasks
+    if (images.length === 0 && Object.keys(imageFiles).length > 0) {
+      console.log("Using sequential image assignment as fallback");
+      let taskIndex = 1;
+      for (const [imageName, imageInfo] of Object.entries(imageFiles)) {
+        images.push({
+          taskNumber: formatTaskNumber(String(taskIndex)),
+          imageData: imageInfo.data,
+          contentType: imageInfo.contentType
+        });
+        taskIndex++;
+      }
+    }
+    
+    return images;
+  } catch (error) {
+    console.error("Error extracting images:", error);
+    return [];
   }
-  
-  return images;
 };
 
 // Get content type from file path

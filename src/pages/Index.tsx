@@ -43,12 +43,13 @@ const Index = () => {
       setProgress(60);
       
       // Check if we have tasks
-      if (extractedContent.tasks.length === 0) {
-        throw new Error('No tasks could be extracted from the document. Please check the file format.');
+      if (!extractedContent.tasks || extractedContent.tasks.length === 0) {
+        console.error('No tasks were extracted from the document');
+        throw new Error('No tasks could be extracted from the document. Please check the file format or ensure it contains numbered steps.');
       }
       
       setTasks(extractedContent.tasks);
-      setDocTitle(extractedContent.docTitle);
+      setDocTitle(extractedContent.docTitle || 'Unnamed Document');
       
       console.log(`Successfully extracted ${extractedContent.tasks.length} tasks`);
       
@@ -56,15 +57,15 @@ const Index = () => {
       setStatus('generating');
       setProgress(80);
       const docBlob = generateTaskMasterDocument(
-        extractedContent.docTitle,
+        extractedContent.docTitle || 'Unnamed Document',
         extractedContent.tasks
       );
       
       // Create downloadable package
       const zipBlob = await createDownloadPackage(
         docBlob,
-        extractedContent.images,
-        extractedContent.docTitle
+        extractedContent.images || [],
+        extractedContent.docTitle || 'Unnamed Document'
       );
       setDownloadPackage(zipBlob);
       
@@ -80,12 +81,12 @@ const Index = () => {
       console.error('Error processing document:', error);
       setStatus('error');
       setProgress(0);
-      setErrorMessage((error as Error).message);
+      setErrorMessage((error as Error).message || 'Unknown error occurred');
       
       toast({
         variant: "destructive",
         title: "Processing failed",
-        description: (error as Error).message
+        description: (error as Error).message || 'Unknown error occurred'
       });
     }
   };
@@ -93,7 +94,7 @@ const Index = () => {
   // Handle package download
   const handleDownload = () => {
     if (downloadPackage) {
-      saveAs(downloadPackage, `${docTitle} - SOP Package.zip`);
+      saveAs(downloadPackage, `${docTitle || 'Task_Master'} - SOP Package.zip`);
       toast({
         title: "Download started",
         description: "Your SOP package is being downloaded"
