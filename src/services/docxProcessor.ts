@@ -1,7 +1,7 @@
 
 import * as mammoth from 'mammoth';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from 'docx';
-import JSZip from 'jszip'; // Changed import statement
+import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { Task } from '@/components/TaskPreview';
 
@@ -42,6 +42,8 @@ export const processDocument = async (file: File): Promise<ExtractedContent> => 
     
     // Extract tasks from the document content
     const tasks = extractTasks(lines.slice(1), docTitle, images);
+    
+    console.log(`Extracted ${tasks.length} tasks from document`);
     
     return {
       docTitle,
@@ -305,6 +307,6 @@ export const createDownloadPackage = async (
     });
   }
   
-  // Generate the zip file and return it directly as a Blob
-  return await zip.generateAsync({ type: "blob" });
+  // Generate the zip file and return it as a Blob
+  return await zip.generateAsync({ type: "blob" }) as Blob;
 };

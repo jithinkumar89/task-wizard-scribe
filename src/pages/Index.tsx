@@ -35,13 +35,22 @@ const Index = () => {
     try {
       // Process the document
       setProgress(30);
+      console.log('Processing document:', selectedFile.name);
       const extractedContent = await processDocument(selectedFile);
       
       // Update state with extracted content
       setStatus('extracting');
       setProgress(60);
+      
+      // Check if we have tasks
+      if (extractedContent.tasks.length === 0) {
+        throw new Error('No tasks could be extracted from the document. Please check the file format.');
+      }
+      
       setTasks(extractedContent.tasks);
       setDocTitle(extractedContent.docTitle);
+      
+      console.log(`Successfully extracted ${extractedContent.tasks.length} tasks`);
       
       // Generate the Task Master document
       setStatus('generating');
