@@ -10,6 +10,7 @@ import FileUploader from '@/components/FileUploader';
 import ProcessingIndicator from '@/components/ProcessingIndicator';
 import TaskPreview, { Task } from '@/components/TaskPreview';
 import { processDocument, generateTaskMasterDocument, createDownloadPackage } from '@/services/docxProcessor';
+import { processPythonDocument } from '@/services/pythonBridge';
 import { saveAs } from 'file-saver';
 
 type ProcessingStatus = 'idle' | 'parsing' | 'extracting' | 'generating' | 'complete' | 'error';
@@ -23,6 +24,10 @@ const Index = () => {
   const [errorMessage, setErrorMessage] = useState('');
   const [downloadPackage, setDownloadPackage] = useState<Blob | null>(null);
   const [assemblySequenceId, setAssemblySequenceId] = useState<string>('1');
+  const [assemblyName, setAssemblyName] = useState<string>('');
+  const [figureStartRange, setFigureStartRange] = useState<string>('1');
+  const [figureEndRange, setFigureEndRange] = useState<string>('100');
+  const [useTableExtraction, setUseTableExtraction] = useState<boolean>(true);
   const { toast } = useToast();
 
   // Handle file upload
@@ -44,12 +49,68 @@ const Index = () => {
       setStatus('idle');
       return;
     }
+
+    if (!assemblyName.trim()) {
+      toast({
+        variant: "destructive",
+        title: "Missing Assembly Name",
+        description: "Please enter a name for the assembly to use as the description"
+      });
+      setStatus('idle');
+      return;
+    }
     
     try {
       // Process the document
       setProgress(30);
       console.log('Processing document:', selectedFile.name, 'with Assembly Sequence ID:', assemblySequenceId);
-      const extractedContent = await processDocument(selectedFile, assemblySequenceId);
+      
+      let extractedContent;
+      
+      if (useTableExtraction) {
+        // Try using Python-based table extraction (this will throw an error in browser environment)
+        try {
+          const pythonResult = await processPythonDocument(
+            selectedFile, 
+            assemblySequenceId, 
+            assemblyName,
+            parseInt(figureStartRange, 10),
+            parseInt(figureEndRange, 10)
+          );
+          
+          extractedContent = {
+            docTitle: pythonResult.docTitle,
+            tasks: pythonResult.tasks,
+            images: [] // Images are handled differently in Python implementation
+          };
+          
+          // Set download package directly from Python result
+          setDownloadPackage(pythonResult.zipPackage);
+        } catch (error) {
+          console.log("Python processing unavailable, falling back to JavaScript implementation:", error);
+          // Fall back to JavaScript implementation
+          extractedContent = await processDocument(selectedFile, assemblySequenceId);
+          
+          // Update all tasks to have the specified assembly name as description
+          if (extractedContent.tasks && extractedContent.tasks.length > 0) {
+            extractedContent.tasks = extractedContent.tasks.map(task => ({
+              ...task,
+              description: assemblyName
+            }));
+          }
+        }
+      } else {
+        // Use JavaScript implementation directly
+        extractedContent = await processDocument(selectedFile, assemblySequenceId);
+        
+        // Update all tasks to have the specified assembly name as description
+        if (extractedContent.tasks && extractedContent.tasks.length > 0) {
+          extractedContent.tasks = extractedContent.tasks.map(task => ({
+            ...task,
+            description: assemblyName
+          }));
+        }
+      }
       
       // Update state with extracted content
       setStatus('extracting');
@@ -58,29 +119,31 @@ const Index = () => {
       // Check if we have tasks
       if (!extractedContent.tasks || extractedContent.tasks.length === 0) {
         console.error('No tasks were extracted from the document');
-        throw new Error('No tasks could be extracted from the document. Please check the file format or ensure it contains numbered steps.');
+        throw new Error('No tasks could be extracted from the document. Please check the file format or ensure it contains numbered steps or a table structure.');
       }
       
       setTasks(extractedContent.tasks);
-      setDocTitle(extractedContent.docTitle || 'Unnamed Document');
+      setDocTitle(extractedContent.docTitle || assemblyName || 'Unnamed Document');
       
       console.log(`Successfully extracted ${extractedContent.tasks.length} tasks`);
       
-      // Generate the Task Master document
-      setStatus('generating');
-      setProgress(80);
-      const docBlob = generateTaskMasterDocument(
-        extractedContent.docTitle || 'Unnamed Document',
-        extractedContent.tasks
-      );
-      
-      // Create downloadable package
-      const zipBlob = await createDownloadPackage(
-        docBlob,
-        extractedContent.images || [],
-        extractedContent.docTitle || 'Unnamed Document'
-      );
-      setDownloadPackage(zipBlob);
+      // Generate the Task Master document if not already done by Python implementation
+      if (!downloadPackage) {
+        setStatus('generating');
+        setProgress(80);
+        const docBlob = generateTaskMasterDocument(
+          extractedContent.docTitle || assemblyName || 'Unnamed Document',
+          extractedContent.tasks
+        );
+        
+        // Create downloadable package
+        const zipBlob = await createDownloadPackage(
+          docBlob,
+          extractedContent.images || [],
+          extractedContent.docTitle || assemblyName || 'Unnamed Document'
+        );
+        setDownloadPackage(zipBlob);
+      }
       
       // Complete
       setStatus('complete');
@@ -107,7 +170,7 @@ const Index = () => {
   // Handle package download
   const handleDownload = () => {
     if (downloadPackage) {
-      saveAs(downloadPackage, `${docTitle || 'Task_Master'} - SOP Package.zip`);
+      saveAs(downloadPackage, `${docTitle || assemblyName || 'Task_Master'} - SOP Package.zip`);
       toast({
         title: "Download started",
         description: "Your SOP package is being downloaded"
@@ -119,7 +182,7 @@ const Index = () => {
   const handleImagesDownload = () => {
     if (downloadPackage) {
       // The docxProcessor.createDownloadPackage already creates a zip with images folder
-      saveAs(downloadPackage, `${docTitle || 'Task_Master'} - Images.zip`);
+      saveAs(downloadPackage, `${docTitle || assemblyName || 'Task_Master'} - Images.zip`);
       toast({
         title: "Images download started",
         description: "Your images package is being downloaded"
@@ -153,42 +216,96 @@ const Index = () => {
             </div>
             <CardContent className="p-4 space-y-2 text-sm">
               <p>
-                1. Enter the Assembly Sequence ID (e.g., 1, 2, 3...) and upload your SOP Word document (.docx).
+                1. Enter the Assembly Sequence ID (e.g., 1, 2, 3...) and Assembly Name.
               </p>
               <p>
-                2. The application will extract each step from the document and assign task numbers in the format "Assembly_ID-0-Step_Number" (e.g., 1-0-001).
+                2. If your document contains figure references, enter the figure range (e.g., 53-79).
               </p>
               <p>
-                3. A Task Master document will be generated with proper formatting.
+                3. Upload your SOP Word document (.docx) containing a table with tasks.
               </p>
               <p>
-                4. Images will be extracted and renamed according to the task numbers.
+                4. The application will extract each task and assign task numbers in the format "{assemblySequenceId}-0-001".
               </p>
               <p>
-                5. Download the complete package or just the images separately.
+                5. Images will be extracted and renamed according to the task numbers.
+              </p>
+              <p>
+                6. Download the complete package or just the images separately.
               </p>
             </CardContent>
           </Card>
           
-          {/* Assembly Sequence ID Input */}
+          {/* Input form */}
           {status === 'idle' && (
-            <div className="mb-6 bg-white p-4 rounded-lg shadow-sm border">
-              <Label htmlFor="sequenceId" className="text-sm font-medium">
-                Assembly Sequence ID
-              </Label>
-              <div className="flex mt-2 gap-2 items-center">
-                <Input
-                  id="sequenceId"
-                  type="number"
-                  min="1"
-                  value={assemblySequenceId}
-                  onChange={(e) => setAssemblySequenceId(e.target.value)}
-                  className="w-32"
-                  placeholder="e.g., 1"
-                />
-                <p className="text-sm text-gray-500">
-                  This will be used to prefix task numbers (e.g., {assemblySequenceId}-0-001)
+            <div className="mb-6 bg-white p-4 rounded-lg shadow-sm border space-y-4">
+              <div>
+                <Label htmlFor="sequenceId" className="text-sm font-medium">
+                  Assembly Sequence ID
+                </Label>
+                <div className="flex mt-2 gap-2 items-center">
+                  <Input
+                    id="sequenceId"
+                    type="number"
+                    min="1"
+                    value={assemblySequenceId}
+                    onChange={(e) => setAssemblySequenceId(e.target.value)}
+                    className="w-32"
+                    placeholder="e.g., 1"
+                  />
+                  <p className="text-sm text-gray-500">
+                    This will be used to prefix task numbers (e.g., {assemblySequenceId}-0-001)
+                  </p>
+                </div>
+              </div>
+              
+              <div>
+                <Label htmlFor="assemblyName" className="text-sm font-medium">
+                  Assembly Name
+                </Label>
+                <div className="flex mt-2 gap-2 items-center">
+                  <Input
+                    id="assemblyName"
+                    type="text"
+                    value={assemblyName}
+                    onChange={(e) => setAssemblyName(e.target.value)}
+                    className="w-full"
+                    placeholder="e.g., Engine Assembly"
+                  />
+                </div>
+                <p className="text-sm text-gray-500 mt-1">
+                  This will be used as the description for all tasks
                 </p>
+              </div>
+              
+              <div>
+                <Label className="text-sm font-medium">
+                  Figure Reference Range (Optional)
+                </Label>
+                <div className="flex mt-2 gap-2 items-center">
+                  <Input
+                    id="figureStartRange"
+                    type="number"
+                    min="1"
+                    value={figureStartRange}
+                    onChange={(e) => setFigureStartRange(e.target.value)}
+                    className="w-24"
+                    placeholder="Start"
+                  />
+                  <span>to</span>
+                  <Input
+                    id="figureEndRange"
+                    type="number"
+                    min="1"
+                    value={figureEndRange}
+                    onChange={(e) => setFigureEndRange(e.target.value)}
+                    className="w-24"
+                    placeholder="End"
+                  />
+                  <p className="text-sm text-gray-500">
+                    If your document uses "Figure X" references
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -216,7 +333,7 @@ const Index = () => {
                 Extracted Tasks Preview
               </h2>
               
-              <TaskPreview tasks={tasks} documentTitle={docTitle} />
+              <TaskPreview tasks={tasks} documentTitle={docTitle || assemblyName} />
               
               {/* Download buttons */}
               {status === 'complete' && downloadPackage && (

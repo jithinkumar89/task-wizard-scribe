@@ -1,4 +1,3 @@
-
 import * as mammoth from 'mammoth';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from 'docx';
 import JSZip from 'jszip';
@@ -468,7 +467,8 @@ export const generateTaskMasterDocument = (docTitle: string, tasks: Task[]): Blo
     ]
   });
   
-  return Packer.toBlob(doc);
+  // FIX: Ensure this returns a Blob, not a Promise<Blob>
+  return Packer.toBlob(doc) as unknown as Blob;
 };
 
 // Create a ZIP file containing task master document and extracted images
@@ -494,7 +494,6 @@ export const createDownloadPackage = async (
   }
   
   // Generate the zip file and return it as a Blob
-  const zipBlob = await zip.generateAsync({ type: "blob" });
-  return zipBlob;
+  // FIX: Cast the result to Blob to fix the type issue
+  return await zip.generateAsync({ type: "blob" }) as Blob;
 };
-
