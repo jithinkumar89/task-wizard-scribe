@@ -27,15 +27,21 @@ export const processPythonDocument = async (
   message: string;
 }> => {
   try {
-    // In a real implementation, we would send the file to a server
-    // that can run Python and process the document
+    // In a real implementation, we would send the file to a server endpoint
+    // using FormData and fetch/axios to call an API that runs the Python script
     
-    // For now, we'll use our existing docxProcessor to extract basic content
-    // but improve the logic based on the Python script's approach
+    const formData = new FormData();
+    formData.append('file', file);
+    formData.append('assemblyId', assemblySequenceId);
+    formData.append('assemblyName', assemblyName);
+    formData.append('figureStart', figureStartRange.toString());
+    formData.append('figureEnd', figureEndRange.toString());
     
-    // We're just creating a simulation of what would happen with the Python script
-    // This is just a placeholder - in a real application, you would send the file
-    // to a server endpoint that runs the Python script
+    // This is where you'd normally make an API call like:
+    // const response = await fetch('/api/process-document', {
+    //   method: 'POST',
+    //   body: formData
+    // });
     
     console.log('Python document processing would be called with:', {
       file,
@@ -45,12 +51,12 @@ export const processPythonDocument = async (
       figureEndRange
     });
     
-    // Return a mock successful response
-    // In a real implementation, this would come from the Python script
+    // For the demo version, since we can't run Python in the browser,
+    // we'll rely on the JavaScript implementation in docxProcessor.ts
     throw new Error(
-      "Python processing is not implemented in the browser. " +
-      "This would require a server-side implementation with Python. " +
-      "Please use the JavaScript implementation instead or set up a server with Python."
+      "The Python processor is configured for server-side deployment. " +
+      "For this browser demo, the app will use the JavaScript implementation instead. " +
+      "To enable Python processing, deploy to a server with Python support."
     );
   } catch (error) {
     console.error("Error in Python processing:", error);

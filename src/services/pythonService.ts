@@ -31,7 +31,7 @@ export const runPythonProcessor = async (
     
     // Run Python script
     const options = {
-      mode: 'text',
+      mode: 'text' as 'text', // Fix: explicitly type as 'text'
       pythonPath: 'python3', // Make sure Python is installed on the server
       pythonOptions: ['-u'], // Unbuffered output
       scriptPath: path.join(__dirname, '../services'),
@@ -40,7 +40,7 @@ export const runPythonProcessor = async (
         assemblyId,
         assemblyName,
         figureStart.toString(),
-        figureEnd.toString()
+        figureEndRange.toString()
       ]
     };
     

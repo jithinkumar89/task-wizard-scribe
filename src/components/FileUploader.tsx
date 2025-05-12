@@ -6,9 +6,10 @@ import { useToast } from '@/components/ui/use-toast';
 
 interface FileUploaderProps {
   onFileSelect: (file: File) => void;
+  isProcessing?: boolean;
 }
 
-const FileUploader = ({ onFileSelect }: FileUploaderProps) => {
+const FileUploader = ({ onFileSelect, isProcessing = false }: FileUploaderProps) => {
   const [isDragging, setIsDragging] = useState(false);
   const { toast } = useToast();
   
@@ -77,12 +78,14 @@ const FileUploader = ({ onFileSelect }: FileUploaderProps) => {
           className="hidden"
           accept=".docx"
           onChange={handleFileChange}
+          disabled={isProcessing}
         />
         <Button 
           onClick={() => document.getElementById('file-upload')?.click()}
           className="bg-sop-blue hover:bg-sop-lightBlue text-white"
+          disabled={isProcessing}
         >
-          Select File
+          {isProcessing ? 'Processing...' : 'Select File'}
         </Button>
       </div>
     </div>
