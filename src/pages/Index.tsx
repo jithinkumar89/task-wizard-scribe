@@ -8,7 +8,7 @@ import { Label } from '@/components/ui/label';
 import FileUploader from '@/components/FileUploader';
 import ProcessingIndicator from '@/components/ProcessingIndicator';
 import TaskPreview, { Task } from '@/components/TaskPreview';
-import { processDocument, generateTaskMasterDocument, createDownloadPackage } from '@/services/docxProcessor';
+import { processDocument, generateExcelFile, createDownloadPackage } from '@/services/docxProcessor';
 import { processPythonDocument } from '@/services/pythonBridge';
 import { saveAs } from 'file-saver';
 
@@ -27,17 +27,13 @@ const Index = () => {
   const [assemblySequenceId, setAssemblySequenceId] = useState<string>('1');
   const [assemblyName, setAssemblyName] = useState<string>('');
   const [figureStartRange, setFigureStartRange] = useState<string>('1');
-  const [figureEndRange, setFigureEndRange] = useState<string>('100');
+  const [figureEndRange, setFigureEndRange] = useState<string>('10');
   const [useTableExtraction, setUseTableExtraction] = useState<boolean>(true);
   const { toast } = useToast();
 
   // Handle file upload
-  const handleFileSelect = async (selectedFile: File, selectedLogoFile?: File) => {
+  const handleFileSelect = async (selectedFile: File) => {
     setFile(selectedFile);
-    if (selectedLogoFile) {
-      setLogoFile(selectedLogoFile);
-    }
-    
     setStatus('parsing');
     setProgress(10);
     setTasks([]);
@@ -70,7 +66,6 @@ const Index = () => {
       // Process the document
       setProgress(30);
       console.log('Processing document:', selectedFile.name, 'with Assembly Sequence ID:', assemblySequenceId);
-      console.log('Logo file:', selectedLogoFile?.name || 'None');
       
       let extractedContent;
       
@@ -82,8 +77,7 @@ const Index = () => {
             assemblySequenceId, 
             assemblyName,
             parseInt(figureStartRange, 10),
-            parseInt(figureEndRange, 10),
-            selectedLogoFile
+            parseInt(figureEndRange, 10)
           );
           
           extractedContent = {
@@ -104,10 +98,7 @@ const Index = () => {
           if (extractedContent.tasks && extractedContent.tasks.length > 0) {
             extractedContent.tasks = extractedContent.tasks.map(task => ({
               ...task,
-              description: assemblyName,
-              // Convert task format to match Python output format
-              task_no: task.taskNumber,
-              attachment: task.hasImage ? task.attachment : ''
+              description: assemblyName
             }));
           }
         }
@@ -119,10 +110,7 @@ const Index = () => {
         if (extractedContent.tasks && extractedContent.tasks.length > 0) {
           extractedContent.tasks = extractedContent.tasks.map(task => ({
             ...task,
-            description: assemblyName,
-            // Convert task format to match Python output format
-            task_no: task.taskNumber,
-            attachment: task.hasImage ? task.attachment : ''
+            description: assemblyName
           }));
         }
       }
@@ -156,8 +144,7 @@ const Index = () => {
           excelBlob,  // Using Excel blob instead of Word doc
           extractedContent.images || [],
           extractedContent.docTitle || assemblyName || 'Unnamed Document',
-          // Add logo to package if provided
-          selectedLogoFile ? await selectedLogoFile.arrayBuffer() : undefined
+          logoFile ? await logoFile.arrayBuffer() : undefined
         );
         setDownloadPackage(zipBlob);
       }
@@ -265,22 +252,19 @@ const Index = () => {
                 1. Enter the Assembly Sequence ID (e.g., 1, 2, 3...) and Assembly Name.
               </p>
               <p>
-                2. If your document contains figure references, enter the figure range (e.g., 53-79).
+                2. If your document contains figure references, enter the figure range (e.g., 1-10).
               </p>
               <p>
                 3. Upload your SOP Word document (.docx) containing a table with tasks.
               </p>
               <p>
-                4. Optionally upload a logo to include in the package.
+                4. The application will extract each task and assign task numbers in the format "{assemblySequenceId}.0.001".
               </p>
               <p>
-                5. The application will extract each task and assign task numbers in the format "{assemblySequenceId}-0-001".
+                5. Images will be extracted and renamed according to the figure references in the document.
               </p>
               <p>
-                6. Images will be extracted and renamed according to the task numbers.
-              </p>
-              <p>
-                7. Download the complete package, Excel file or just the images separately.
+                6. Download the complete package, Excel file or just the images separately.
               </p>
             </CardContent>
           </Card>
@@ -303,7 +287,7 @@ const Index = () => {
                     placeholder="e.g., 1"
                   />
                   <p className="text-sm text-gray-500">
-                    This will be used to prefix task numbers (e.g., {assemblySequenceId}-0-001)
+                    This will be used to prefix task numbers (e.g., {assemblySequenceId}.0.001)
                   </p>
                 </div>
               </div>
@@ -329,7 +313,7 @@ const Index = () => {
               
               <div>
                 <Label className="text-sm font-medium">
-                  Figure Reference Range (Optional)
+                  Figure Reference Range
                 </Label>
                 <div className="flex mt-2 gap-2 items-center">
                   <Input

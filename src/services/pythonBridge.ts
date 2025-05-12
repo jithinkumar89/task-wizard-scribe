@@ -18,8 +18,7 @@ export const processPythonDocument = async (
   assemblySequenceId: string,
   assemblyName: string,
   figureStartRange: number,
-  figureEndRange: number,
-  logoFile?: File
+  figureEndRange: number
 ): Promise<{
   tasks: Task[];
   docTitle: string;
@@ -38,11 +37,6 @@ export const processPythonDocument = async (
     formData.append('figureStart', figureStartRange.toString());
     formData.append('figureEnd', figureEndRange.toString());
     
-    // Append logo if provided
-    if (logoFile) {
-      formData.append('logo', logoFile);
-    }
-    
     // This is where you'd normally make an API call like:
     // const response = await fetch('/api/process-document', {
     //   method: 'POST',
@@ -54,8 +48,7 @@ export const processPythonDocument = async (
       assemblySequenceId,
       assemblyName,
       figureStartRange,
-      figureEndRange,
-      hasLogo: !!logoFile
+      figureEndRange
     });
     
     // For the demo version, since we can't run Python in the browser,

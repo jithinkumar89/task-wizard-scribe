@@ -5,7 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
 export interface Task {
-  task_no: string;  // Changed to match Python output
+  task_no: string;
   type: string;
   eta_sec: string;
   description: string;
@@ -13,6 +13,10 @@ export interface Task {
   specification: string;
   attachment: string;
   hasImage?: boolean;  // Optional for backward compatibility
+  
+  // Legacy properties for compatibility with existing code
+  taskNumber?: string;
+  etaSec?: string;
 }
 
 interface TaskPreviewProps {
