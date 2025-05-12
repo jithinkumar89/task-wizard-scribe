@@ -40,7 +40,7 @@ export const runPythonProcessor = async (
         assemblyId,
         assemblyName,
         figureStart.toString(),
-        figureEndRange.toString()
+        figureEnd.toString() // Fixed: using figureEnd instead of figureEndRange
       ]
     };
     
