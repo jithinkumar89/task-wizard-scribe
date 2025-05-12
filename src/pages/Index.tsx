@@ -1,4 +1,3 @@
-
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -17,12 +16,14 @@ type ProcessingStatus = 'idle' | 'parsing' | 'extracting' | 'generating' | 'comp
 
 const Index = () => {
   const [file, setFile] = useState<File | null>(null);
+  const [logoFile, setLogoFile] = useState<File | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [docTitle, setDocTitle] = useState('');
   const [errorMessage, setErrorMessage] = useState('');
   const [downloadPackage, setDownloadPackage] = useState<Blob | null>(null);
+  const [excelFile, setExcelFile] = useState<Blob | null>(null);
   const [assemblySequenceId, setAssemblySequenceId] = useState<string>('1');
   const [assemblyName, setAssemblyName] = useState<string>('');
   const [figureStartRange, setFigureStartRange] = useState<string>('1');
@@ -31,14 +32,19 @@ const Index = () => {
   const { toast } = useToast();
 
   // Handle file upload
-  const handleFileSelect = async (selectedFile: File) => {
+  const handleFileSelect = async (selectedFile: File, selectedLogoFile?: File) => {
     setFile(selectedFile);
+    if (selectedLogoFile) {
+      setLogoFile(selectedLogoFile);
+    }
+    
     setStatus('parsing');
     setProgress(10);
     setTasks([]);
     setDocTitle('');
     setErrorMessage('');
     setDownloadPackage(null);
+    setExcelFile(null);
     
     if (!assemblySequenceId || isNaN(Number(assemblySequenceId))) {
       toast({
@@ -64,6 +70,7 @@ const Index = () => {
       // Process the document
       setProgress(30);
       console.log('Processing document:', selectedFile.name, 'with Assembly Sequence ID:', assemblySequenceId);
+      console.log('Logo file:', selectedLogoFile?.name || 'None');
       
       let extractedContent;
       
@@ -75,7 +82,8 @@ const Index = () => {
             assemblySequenceId, 
             assemblyName,
             parseInt(figureStartRange, 10),
-            parseInt(figureEndRange, 10)
+            parseInt(figureEndRange, 10),
+            selectedLogoFile
           );
           
           extractedContent = {
@@ -86,6 +94,7 @@ const Index = () => {
           
           // Set download package directly from Python result
           setDownloadPackage(pythonResult.zipPackage);
+          setExcelFile(pythonResult.excelFile);
         } catch (error) {
           console.log("Python processing unavailable, falling back to JavaScript implementation:", error);
           // Fall back to JavaScript implementation
@@ -95,7 +104,10 @@ const Index = () => {
           if (extractedContent.tasks && extractedContent.tasks.length > 0) {
             extractedContent.tasks = extractedContent.tasks.map(task => ({
               ...task,
-              description: assemblyName
+              description: assemblyName,
+              // Convert task format to match Python output format
+              task_no: task.taskNumber,
+              attachment: task.hasImage ? task.attachment : ''
             }));
           }
         }
@@ -107,7 +119,10 @@ const Index = () => {
         if (extractedContent.tasks && extractedContent.tasks.length > 0) {
           extractedContent.tasks = extractedContent.tasks.map(task => ({
             ...task,
-            description: assemblyName
+            description: assemblyName,
+            // Convert task format to match Python output format
+            task_no: task.taskNumber,
+            attachment: task.hasImage ? task.attachment : ''
           }));
         }
       }
@@ -131,16 +146,18 @@ const Index = () => {
       if (!downloadPackage) {
         setStatus('generating');
         setProgress(80);
-        const docBlob = generateTaskMasterDocument(
-          extractedContent.docTitle || assemblyName || 'Unnamed Document',
-          extractedContent.tasks
-        );
+        
+        // Generate Excel file (same format as task preview)
+        const excelBlob = await generateExcelFile(extractedContent.tasks, assemblyName);
+        setExcelFile(excelBlob);
         
         // Create downloadable package
         const zipBlob = await createDownloadPackage(
-          docBlob,
+          excelBlob,  // Using Excel blob instead of Word doc
           extractedContent.images || [],
-          extractedContent.docTitle || assemblyName || 'Unnamed Document'
+          extractedContent.docTitle || assemblyName || 'Unnamed Document',
+          // Add logo to package if provided
+          selectedLogoFile ? await selectedLogoFile.arrayBuffer() : undefined
         );
         setDownloadPackage(zipBlob);
       }
@@ -167,6 +184,23 @@ const Index = () => {
     }
   };
 
+  // Generate Excel file from tasks
+  const generateExcelFile = async (tasks: Task[], assemblyName: string): Promise<Blob> => {
+    // This is a placeholder - in a real implementation, we would use a library like xlsx
+    // to generate an Excel file from the tasks data
+    // For now, we're just returning a simple Excel-like format
+    
+    console.log("Would generate Excel with tasks:", tasks);
+    
+    // Use Blob to create a downloadable file (CSV format as a simple example)
+    const header = "task_no,type,eta_sec,description,activity,specification,attachment\n";
+    const rows = tasks.map(task => {
+      return `"${task.task_no}","${task.type}","${task.eta_sec}","${task.description}","${task.activity.replace(/"/g, '""')}","${task.specification}","${task.attachment}"`;
+    }).join("\n");
+    
+    return new Blob([header + rows], { type: "application/vnd.ms-excel" });
+  };
+
   // Handle package download
   const handleDownload = () => {
     if (downloadPackage) {
@@ -174,6 +208,17 @@ const Index = () => {
       toast({
         title: "Download started",
         description: "Your SOP package is being downloaded"
+      });
+    }
+  };
+  
+  // Handle Excel-only download
+  const handleExcelDownload = () => {
+    if (excelFile) {
+      saveAs(excelFile, `${docTitle || assemblyName || 'Task_Master'} - Tasks.xlsx`);
+      toast({
+        title: "Excel download started",
+        description: "Your task Excel file is being downloaded"
       });
     }
   };
@@ -200,6 +245,7 @@ const Index = () => {
               <FileText size={24} />
               <h1 className="text-xl font-bold">SOP Task Master Generator</h1>
             </div>
+            <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Medical Technologies Logo" className="h-8" />
           </div>
         </div>
       </header>
@@ -225,13 +271,16 @@ const Index = () => {
                 3. Upload your SOP Word document (.docx) containing a table with tasks.
               </p>
               <p>
-                4. The application will extract each task and assign task numbers in the format "{assemblySequenceId}-0-001".
+                4. Optionally upload a logo to include in the package.
               </p>
               <p>
-                5. Images will be extracted and renamed according to the task numbers.
+                5. The application will extract each task and assign task numbers in the format "{assemblySequenceId}-0-001".
               </p>
               <p>
-                6. Download the complete package or just the images separately.
+                6. Images will be extracted and renamed according to the task numbers.
+              </p>
+              <p>
+                7. Download the complete package, Excel file or just the images separately.
               </p>
             </CardContent>
           </Card>
@@ -337,13 +386,22 @@ const Index = () => {
               
               {/* Download buttons */}
               {status === 'complete' && downloadPackage && (
-                <div className="flex justify-center mt-6 space-x-4">
+                <div className="flex flex-wrap justify-center mt-6 gap-4">
                   <Button 
                     onClick={handleDownload}
                     className="bg-sop-blue hover:bg-sop-lightBlue px-6 py-2"
                   >
                     <Download className="mr-2 h-4 w-4" />
                     Download Complete Package
+                  </Button>
+                  
+                  <Button 
+                    onClick={handleExcelDownload}
+                    variant="outline"
+                    className="px-6 py-2"
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Download Excel File
                   </Button>
                   
                   <Button 
@@ -375,8 +433,9 @@ const Index = () => {
       
       {/* Footer */}
       <footer className="bg-gray-100 py-4 mt-12">
-        <div className="container mx-auto px-4 text-center text-sm text-gray-600">
-          SOP Task Master Generator - Streamline your standard operating procedures
+        <div className="container mx-auto px-4 text-center text-sm text-gray-600 flex justify-center items-center space-x-2">
+          <span>SOP Task Master Generator - BPL Medical Technologies</span>
+          <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Logo" className="h-5" />
         </div>
       </footer>
     </div>

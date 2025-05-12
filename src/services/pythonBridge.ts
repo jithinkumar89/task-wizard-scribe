@@ -11,14 +11,15 @@ interface PythonProcessResponse {
   zip_path?: string;
 }
 
-// Since we can't directly run Python in browser, we need to simulate it
+// Since we can't directly run Python in browser, we simulate an API call
 // In a real app, this would call an API endpoint that runs Python
 export const processPythonDocument = async (
   file: File, 
   assemblySequenceId: string,
   assemblyName: string,
   figureStartRange: number,
-  figureEndRange: number
+  figureEndRange: number,
+  logoFile?: File
 ): Promise<{
   tasks: Task[];
   docTitle: string;
@@ -37,6 +38,11 @@ export const processPythonDocument = async (
     formData.append('figureStart', figureStartRange.toString());
     formData.append('figureEnd', figureEndRange.toString());
     
+    // Append logo if provided
+    if (logoFile) {
+      formData.append('logo', logoFile);
+    }
+    
     // This is where you'd normally make an API call like:
     // const response = await fetch('/api/process-document', {
     //   method: 'POST',
@@ -48,7 +54,8 @@ export const processPythonDocument = async (
       assemblySequenceId,
       assemblyName,
       figureStartRange,
-      figureEndRange
+      figureEndRange,
+      hasLogo: !!logoFile
     });
     
     // For the demo version, since we can't run Python in the browser,

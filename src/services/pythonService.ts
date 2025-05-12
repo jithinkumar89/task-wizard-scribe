@@ -14,12 +14,14 @@ export const runPythonProcessor = async (
   assemblyId: string,
   assemblyName: string,
   figureStart: number,
-  figureEnd: number
+  figureEnd: number,
+  logoPath?: string
 ): Promise<{
   success: boolean;
   message: string;
   tasks?: Task[];
   zipBuffer?: Buffer;
+  excelBuffer?: Buffer;
 }> => {
   try {
     // Create temp directory
@@ -29,30 +31,50 @@ export const runPythonProcessor = async (
     // Write file to temp location
     fs.writeFileSync(tempFilePath, fileBuffer);
     
+    // Arguments for Python script
+    const args = [
+      tempFilePath,
+      assemblyId,
+      assemblyName,
+      figureStart.toString(),
+      figureEnd.toString()
+    ];
+    
+    // Add logo path if provided
+    if (logoPath) {
+      args.push(logoPath);
+    }
+    
     // Run Python script
     const options = {
-      mode: 'text' as 'text', // Fix: explicitly type as 'text'
-      pythonPath: 'python3', // Make sure Python is installed on the server
-      pythonOptions: ['-u'], // Unbuffered output
+      mode: 'text' as 'text',
+      pythonPath: 'python3',
+      pythonOptions: ['-u'],
       scriptPath: path.join(__dirname, '../services'),
-      args: [
-        tempFilePath,
-        assemblyId,
-        assemblyName,
-        figureStart.toString(),
-        figureEnd.toString() // Fixed: using figureEnd instead of figureEndRange
-      ]
+      args: args
     };
+    
+    console.log('Running Python processor with options:', JSON.stringify(options));
     
     const result = await PythonShell.run('pythonProcessor.py', options);
     
     // Parse result (assuming the Python script returns JSON)
     const jsonResult = JSON.parse(result[0]);
     
+    console.log('Python processor result:', jsonResult);
+    
     // Read the ZIP file if processing was successful
     let zipBuffer;
-    if (jsonResult.success && jsonResult.zip_path) {
-      zipBuffer = fs.readFileSync(jsonResult.zip_path);
+    let excelBuffer;
+    
+    if (jsonResult.success) {
+      if (jsonResult.zip_path) {
+        zipBuffer = fs.readFileSync(jsonResult.zip_path);
+      }
+      
+      if (jsonResult.excel_path) {
+        excelBuffer = fs.readFileSync(jsonResult.excel_path);
+      }
     }
     
     // Clean up temp files
@@ -62,7 +84,8 @@ export const runPythonProcessor = async (
       success: jsonResult.success,
       message: jsonResult.message,
       tasks: jsonResult.tasks,
-      zipBuffer
+      zipBuffer,
+      excelBuffer
     };
   } catch (error) {
     console.error('Error running Python processor:', error);

@@ -79,9 +79,21 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
       console.log(`Alternative extraction found ${tasks.length} tasks`);
     }
     
+    // Convert to new task format with task_no instead of taskNumber
+    const convertedTasks = tasks.map(task => ({
+      task_no: task.taskNumber,
+      type: task.type,
+      eta_sec: task.etaSec,
+      description: task.description,
+      activity: task.activity,
+      specification: task.specification,
+      attachment: task.hasImage ? task.attachment : '',
+      hasImage: task.hasImage
+    })) as unknown as Task[];
+    
     return {
       docTitle,
-      tasks,
+      tasks: convertedTasks,
       images
     };
   } catch (error) {
@@ -137,7 +149,7 @@ const extractTasks = (
         tasks.push({
           taskNumber: taskNumber,
           type: 'Operation',
-          etaSec: '',
+          eta_sec: '',
           description: trimmedLine.substring(stepMatch[0].length).trim(),
           activity: currentTask.trim(),
           specification: '',
@@ -165,7 +177,7 @@ const extractTasks = (
     tasks.push({
       taskNumber: taskNumber,
       type: 'Operation',
-      etaSec: '',
+      eta_sec: '',
       description: currentTask.trim(),
       activity: currentTask.trim(),
       specification: '',
@@ -208,7 +220,7 @@ const extractTasksAggressively = (
     tasks.push({
       taskNumber: formattedNumber,
       type: 'Operation',
-      etaSec: '',
+      eta_sec: '',
       description: paragraph.trim(),
       activity: paragraph.trim(),
       specification: '',
@@ -250,7 +262,7 @@ const extractTasksFromTable = (
       tasks.push({
         taskNumber: formattedNumber,
         type: 'Operation',
-        etaSec: '',
+        eta_sec: '',
         description: restOfLine,
         activity: restOfLine,
         specification: '',
@@ -407,6 +419,44 @@ const getContentTypeFromPath = (path: string): string => {
   }
 };
 
+// Generate an Excel file from extracted tasks
+export const generateExcelFile = async (tasks: Task[], docTitle: string): Promise<Blob> => {
+  try {
+    // This is a simplified Excel creation using CSV format
+    // For a real implementation, you would use a library like xlsx
+    
+    // Create CSV header
+    const headers = ["task_no", "type", "eta_sec", "description", "activity", "specification", "attachment"];
+    let csvContent = headers.join(",") + "\n";
+    
+    // Add rows
+    tasks.forEach(task => {
+      // Escape CSV values properly
+      const escapeCsv = (value: string) => {
+        if (value === null || value === undefined) return '';
+        return `"${String(value).replace(/"/g, '""')}"`;
+      };
+      
+      const row = [
+        escapeCsv(task.task_no),
+        escapeCsv(task.type),
+        escapeCsv(task.eta_sec),
+        escapeCsv(task.description),
+        escapeCsv(task.activity),
+        escapeCsv(task.specification),
+        escapeCsv(task.attachment)
+      ].join(",");
+      
+      csvContent += row + "\n";
+    });
+    
+    return new Blob([csvContent], { type: "text/csv;charset=utf-8" });
+  } catch (error) {
+    console.error("Error generating Excel file:", error);
+    throw new Error("Failed to generate Excel file");
+  }
+};
+
 // Generate a task master document from extracted tasks
 export const generateTaskMasterDocument = (docTitle: string, tasks: Task[]): Blob => {
   const doc = new Document({
@@ -450,9 +500,9 @@ export const generateTaskMasterDocument = (docTitle: string, tasks: Task[]): Blo
               ...tasks.map(task => 
                 new TableRow({
                   children: [
-                    new TableCell({ children: [new Paragraph(task.taskNumber)] }),
+                    new TableCell({ children: [new Paragraph(task.task_no)] }),
                     new TableCell({ children: [new Paragraph(task.type)] }),
-                    new TableCell({ children: [new Paragraph(task.etaSec)] }),
+                    new TableCell({ children: [new Paragraph(task.eta_sec)] }),
                     new TableCell({ children: [new Paragraph(task.description)] }),
                     new TableCell({ children: [new Paragraph(task.activity)] }),
                     new TableCell({ children: [new Paragraph(task.specification)] }),
@@ -475,15 +525,22 @@ export const generateTaskMasterDocument = (docTitle: string, tasks: Task[]): Blo
 export const createDownloadPackage = async (
   docBlob: Blob, 
   images: Array<{ taskNumber: string; imageData: Blob; contentType: string }>,
-  docTitle: string
+  docTitle: string,
+  logoBuffer?: ArrayBuffer
 ): Promise<Blob> => {
   const zip = new JSZip();
   
-  // Add the generated document
-  zip.file(`${docTitle} - Task Master.docx`, docBlob);
+  // Add the generated document/Excel file
+  const fileExtension = docBlob.type.includes('excel') || docBlob.type.includes('csv') ? 'xlsx' : 'docx';
+  zip.file(`${docTitle} - Task Master.${fileExtension}`, docBlob);
   
   // Create images folder
   const imagesFolder = zip.folder("images");
+  
+  // Add logo if provided
+  if (logoBuffer && imagesFolder) {
+    imagesFolder.file("logo.png", logoBuffer);
+  }
   
   // Add each image with the appropriate name
   if (imagesFolder) {
@@ -494,6 +551,5 @@ export const createDownloadPackage = async (
   }
   
   // Generate the zip file and return it as a Blob
-  // FIX: Cast the result to Blob to fix the type issue
-  return await zip.generateAsync({ type: "blob" }) as Blob;
+  return await zip.generateAsync({ type: "blob" });
 };

@@ -5,14 +5,14 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 
 export interface Task {
-  taskNumber: string;
+  task_no: string;  // Changed to match Python output
   type: string;
-  etaSec: string;
+  eta_sec: string;
   description: string;
   activity: string;
   specification: string;
   attachment: string;
-  hasImage: boolean;
+  hasImage?: boolean;  // Optional for backward compatibility
 }
 
 interface TaskPreviewProps {
@@ -46,17 +46,21 @@ const TaskPreview = ({ tasks, documentTitle }: TaskPreviewProps) => {
           <TableBody>
             {tasks.map((task, index) => (
               <TableRow key={index}>
-                <TableCell className="font-medium">{task.taskNumber}</TableCell>
+                <TableCell className="font-medium">{task.task_no}</TableCell>
                 <TableCell>{task.type}</TableCell>
-                <TableCell>{task.etaSec}</TableCell>
+                <TableCell>{task.eta_sec}</TableCell>
                 <TableCell>{task.description}</TableCell>
-                <TableCell>{task.activity}</TableCell>
+                <TableCell className="whitespace-pre-wrap max-w-48">{task.activity}</TableCell>
                 <TableCell>{task.specification}</TableCell>
                 <TableCell>
-                  {task.hasImage ? (
-                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                      {task.attachment}
-                    </Badge>
+                  {task.attachment ? (
+                    <div className="flex flex-wrap gap-1">
+                      {task.attachment.split(',').map((id, idx) => (
+                        <Badge key={idx} variant="outline" className="bg-green-50 text-green-700 border-green-200">
+                          {id.trim()}
+                        </Badge>
+                      ))}
+                    </div>
                   ) : (
                     '-'
                   )}
