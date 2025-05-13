@@ -209,17 +209,35 @@ const Index = () => {
     }
   };
 
+  // Reset all form fields and data
+  const handleReset = () => {
+    setFile(null);
+    setStatus('idle');
+    setProgress(0);
+    setTasks([]);
+    setDocTitle('');
+    setErrorMessage('');
+    setDownloadPackage(null);
+    setExcelFile(null);
+    setAssemblySequenceId('1');
+    setAssemblyName('');
+    setFigureStartRange('1');
+    setFigureEndRange('10');
+  };
+
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
       {/* Header */}
-      <header className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white py-6 shadow-lg">
+      <header className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 text-white py-6 shadow-lg">
         <div className="container mx-auto px-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-2">
               <FileText size={30} className="text-white/90" />
               <h1 className="text-2xl font-bold">SOP Task Master Generator</h1>
             </div>
-            <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Medical Technologies Logo" className="h-10" />
+            <div className="bg-white/20 backdrop-blur-sm p-2 rounded-lg">
+              <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Medical Technologies Logo" className="h-10" />
+            </div>
           </div>
         </div>
       </header>
@@ -228,35 +246,35 @@ const Index = () => {
       <main className="container mx-auto px-4 py-10">
         <div className="max-w-4xl mx-auto">
           <Card className="mb-8 overflow-hidden shadow-lg border-0 bg-white/80 backdrop-blur-sm">
-            <div className="bg-gradient-to-r from-indigo-100 to-blue-100 p-4 border-b">
+            <div className="bg-gradient-to-r from-indigo-100 to-purple-100 p-4 border-b">
               <h2 className="text-lg font-medium flex items-center text-gray-800">
-                <HelpCircle size={20} className="mr-2 text-blue-600" />
+                <HelpCircle size={20} className="mr-2 text-indigo-600" />
                 How it works
               </h2>
             </div>
             <CardContent className="p-6 space-y-3 text-sm">
               <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">1</span>
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">1</span>
                 Enter the Assembly Sequence ID (e.g., 1, 2, 3...) and Assembly Name.
               </p>
               <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">2</span>
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">2</span>
                 If your document contains figure references, enter the figure range (e.g., 1-10).
               </p>
               <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">3</span>
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">3</span>
                 Upload your SOP Word document (.docx) containing a table with tasks.
               </p>
               <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">4</span>
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">4</span>
                 The application will extract each task and assign task numbers in the format "{assemblySequenceId}.0.001".
               </p>
               <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">5</span>
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">5</span>
                 Images will be extracted and renamed according to the figure references in the document.
               </p>
               <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">6</span>
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">6</span>
                 Download the complete package, Excel file or just the images separately.
               </p>
             </CardContent>
@@ -264,7 +282,7 @@ const Index = () => {
           
           {/* Input form */}
           {status === 'idle' && (
-            <div className="mb-6 bg-white/80 backdrop-blur-sm p-6 rounded-lg shadow-md border border-blue-100 space-y-5">
+            <div className="mb-6 bg-white/90 backdrop-blur-sm p-6 rounded-lg shadow-md border border-blue-100 space-y-5">
               <div>
                 <Label htmlFor="sequenceId" className="text-sm font-medium text-gray-700">
                   Assembly Sequence ID
@@ -276,7 +294,7 @@ const Index = () => {
                     min="1"
                     value={assemblySequenceId}
                     onChange={(e) => setAssemblySequenceId(e.target.value)}
-                    className="w-32 border-blue-200 focus:border-blue-400"
+                    className="w-32 border-indigo-200 focus:border-indigo-400"
                     placeholder="e.g., 1"
                   />
                   <p className="text-sm text-gray-500">
@@ -295,7 +313,7 @@ const Index = () => {
                     type="text"
                     value={assemblyName}
                     onChange={(e) => setAssemblyName(e.target.value)}
-                    className="w-full border-blue-200 focus:border-blue-400"
+                    className="w-full border-indigo-200 focus:border-indigo-400"
                     placeholder="e.g., Engine Assembly"
                   />
                 </div>
@@ -315,7 +333,7 @@ const Index = () => {
                     min="1"
                     value={figureStartRange}
                     onChange={(e) => setFigureStartRange(e.target.value)}
-                    className="w-24 border-blue-200 focus:border-blue-400"
+                    className="w-24 border-indigo-200 focus:border-indigo-400"
                     placeholder="Start"
                   />
                   <span>to</span>
@@ -325,7 +343,7 @@ const Index = () => {
                     min="1"
                     value={figureEndRange}
                     onChange={(e) => setFigureEndRange(e.target.value)}
-                    className="w-24 border-blue-200 focus:border-blue-400"
+                    className="w-24 border-indigo-200 focus:border-indigo-400"
                     placeholder="End"
                   />
                   <p className="text-sm text-gray-500">
@@ -356,7 +374,7 @@ const Index = () => {
           {tasks.length > 0 && (
             <div className="space-y-6">
               <h2 className="text-xl font-semibold text-gray-800 flex items-center">
-                <span className="w-2 h-8 bg-gradient-to-b from-blue-600 to-indigo-600 rounded mr-2"></span>
+                <span className="w-2 h-8 bg-gradient-to-b from-blue-600 to-purple-600 rounded mr-2"></span>
                 Extracted Tasks Preview
               </h2>
               
@@ -367,7 +385,7 @@ const Index = () => {
                 <div className="flex flex-wrap justify-center mt-8 gap-4">
                   <Button 
                     onClick={handleDownload}
-                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-6 py-5 shadow-lg transition-all duration-300 hover:shadow-xl"
+                    className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 hover:from-blue-700 hover:via-indigo-600 hover:to-purple-700 px-6 py-5 shadow-lg transition-all duration-300 hover:shadow-xl"
                   >
                     <Download className="mr-2 h-4 w-4" />
                     Download Complete Package
@@ -376,7 +394,7 @@ const Index = () => {
                   <Button 
                     onClick={handleExcelDownload}
                     variant="outline"
-                    className="px-6 py-5 border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors duration-300"
+                    className="px-6 py-5 border-indigo-300 text-indigo-700 hover:bg-indigo-50 transition-colors duration-300"
                   >
                     <Download className="mr-2 h-4 w-4" />
                     Download Excel File
@@ -385,7 +403,7 @@ const Index = () => {
                   <Button 
                     onClick={handleImagesDownload}
                     variant="outline"
-                    className="px-6 py-5 border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors duration-300"
+                    className="px-6 py-5 border-indigo-300 text-indigo-700 hover:bg-indigo-50 transition-colors duration-300"
                   >
                     <Download className="mr-2 h-4 w-4" />
                     Download Images Only
@@ -398,8 +416,8 @@ const Index = () => {
                 <div className="flex justify-center mt-6">
                   <Button 
                     variant="outline"
-                    onClick={() => setStatus('idle')}
-                    className="border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors duration-300"
+                    onClick={handleReset}
+                    className="border-indigo-300 text-indigo-700 hover:bg-indigo-50 transition-colors duration-300"
                   >
                     Process Another Document
                   </Button>
@@ -411,10 +429,12 @@ const Index = () => {
       </main>
       
       {/* Footer */}
-      <footer className="bg-gradient-to-r from-gray-100 to-blue-100 py-6 mt-12">
+      <footer className="bg-gradient-to-r from-gray-100 to-indigo-100 py-6 mt-12">
         <div className="container mx-auto px-4 text-center text-sm text-gray-600 flex justify-center items-center space-x-2">
           <span>SOP Task Master Generator - BPL Medical Technologies</span>
-          <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Logo" className="h-5" />
+          <div className="bg-white/50 backdrop-blur-sm p-1 rounded-md">
+            <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Logo" className="h-5" />
+          </div>
         </div>
       </footer>
     </div>
