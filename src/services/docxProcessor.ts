@@ -1,10 +1,10 @@
 
 import * as mammoth from 'mammoth';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from 'docx';
-import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { Task } from '@/components/TaskPreview';
 import * as XLSX from 'xlsx';
+import JSZip from 'jszip';
 
 // Interface for extracted content
 interface ExtractedContent {
@@ -28,6 +28,36 @@ const stepNumberPatterns = [
   /^(\d+)\s*[\.\)]\s+/ // Simple number with dot or parenthesis: "1) ", "2. "
 ];
 
+// Check if a line is likely a header row
+const isHeaderRow = (line: string): boolean => {
+  // Check for common header terms
+  const headerTerms = [
+    'sl no', 'sl.no', 'sl. no', 'serial no', 'serial number',
+    'step no', 'task no', 'job details', 'description', 'activity',
+    'operation', 'procedure', 'instruction'
+  ];
+  
+  const lowerLine = line.toLowerCase();
+  
+  // If multiple header terms are found, it's likely a header
+  let headerTermsFound = 0;
+  for (const term of headerTerms) {
+    if (lowerLine.includes(term)) {
+      headerTermsFound++;
+      if (headerTermsFound >= 2) {
+        return true;
+      }
+    }
+  }
+  
+  // Check for tab-separated or multiple-space-separated format that might indicate a table header
+  const hasTabSeparation = /\t/.test(line);
+  const hasMultipleSpaceSeparation = /\s{3,}/.test(line);
+  
+  // If it has separation format and contains at least one header term
+  return (hasTabSeparation || hasMultipleSpaceSeparation) && headerTermsFound > 0;
+};
+
 // Process the uploaded Word document
 export const processDocument = async (file: File, assemblySequenceId: string = '1'): Promise<ExtractedContent> => {
   try {
@@ -44,7 +74,7 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
 
     console.log("Document text extracted successfully");
     
-    // Process raw document to extract docTitle from first line
+    // Process raw document to extract text lines
     let lines = result.value.split('\n').filter(line => line.trim() !== '');
     
     // Make sure we have some content
@@ -52,7 +82,19 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
       throw new Error("The document appears to be empty. Please check the file content.");
     }
     
-    const docTitle = lines[0].trim();
+    // The first line might be a title or a header, check if it's likely a header
+    let docTitle = lines[0].trim();
+    let startLineIndex = 1;
+    
+    // If the first line looks like a header row (contains terms like 'Sl No' and 'Job Details')
+    if (isHeaderRow(docTitle)) {
+      console.log("First line appears to be a header row, using it as document title but skipping as task");
+      // Use the next non-header line as title if available
+      if (lines.length > 1 && !isHeaderRow(lines[1])) {
+        startLineIndex = 2;
+      }
+    }
+    
     console.log("Document title:", docTitle);
     
     // Extract images and their relationships
@@ -69,7 +111,7 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
       tasks = extractTasksFromTable(result.value, docTitle, images, assemblySequenceId);
     } else {
       console.log("Using paragraph-based task extraction...");
-      tasks = extractTasks(lines.slice(1), docTitle, images, assemblySequenceId);
+      tasks = extractTasks(lines.slice(startLineIndex), docTitle, images, assemblySequenceId);
     }
     
     console.log(`Extracted ${tasks.length} tasks from document`);
@@ -176,8 +218,8 @@ const extractTasks = (
   for (const line of lines) {
     const trimmedLine = line.trim();
     
-    // Skip empty lines
-    if (trimmedLine === '') continue;
+    // Skip empty lines or header-like lines
+    if (trimmedLine === '' || isHeaderRow(trimmedLine)) continue;
     
     // Check if line starts with any of the step number patterns
     let stepMatch = null;
@@ -193,7 +235,7 @@ const extractTasks = (
         const formatted = formatTaskNumber(currentTaskIndex.toString(), assemblySequenceId);
         
         tasks.push({
-          task_no: formatted, // Updated to use task_no instead of taskNumber
+          task_no: formatted, 
           type: 'Operation',
           eta_sec: '',
           description: trimmedLine.substring(stepMatch[0].length).trim(),
@@ -248,8 +290,10 @@ const extractTasksAggressively = (
   let taskIndex = 1;
   
   for (const paragraph of paragraphs) {
-    // Skip very short paragraphs and likely headers
-    if (paragraph.trim().length < 10 || paragraph.trim() === docTitle) continue;
+    // Skip very short paragraphs, likely headers, or header-like content
+    if (paragraph.trim().length < 10 || 
+        paragraph.trim() === docTitle || 
+        isHeaderRow(paragraph.trim())) continue;
     
     // Attempt to find a number at the start of the paragraph
     const numberMatch = paragraph.match(/^\s*(\d+)/);
@@ -288,9 +332,22 @@ const extractTasksFromTable = (
   const tasks: Task[] = [];
   const lines = content.split('\n').filter(line => line.trim().length > 0);
   let taskIndex = 1;
+  let skipFirstRow = false;
   
-  for (let i = 1; i < lines.length; i++) {  // Skip the first line as it's likely a header
+  // Check if first line is a header
+  if (lines.length > 0 && isHeaderRow(lines[0])) {
+    skipFirstRow = true;
+    console.log("Skipping first row as it appears to be a header:", lines[0]);
+  }
+  
+  // Start from second row if first is a header
+  const startIndex = skipFirstRow ? 1 : 0;
+  
+  for (let i = startIndex; i < lines.length; i++) {
     const line = lines[i].trim();
+    
+    // Skip if this line looks like a header row
+    if (isHeaderRow(line)) continue;
     
     // Look for a number at the beginning of the line
     const match = line.match(/^\s*(\d+)/);
@@ -334,15 +391,16 @@ const extractImages = async (
   assemblySequenceId: string = '1'
 ): Promise<Array<{ task_no: string; imageData: Blob; contentType: string }>> => {
   try {
-    // Create a new JSZip instance - fixed constructor issue
+    // Create a new JSZip instance
     const zip = new JSZip();
-    await zip.loadAsync(await file.arrayBuffer());
+    const zipData = await file.arrayBuffer();
+    const loadedZip = await zip.loadAsync(zipData);
     
     console.log("ZIP file loaded successfully");
     
     // Load the document.xml to identify image relationships
-    const documentXml = await zip.file('word/document.xml')?.async('text');
-    const relationshipsXml = await zip.file('word/_rels/document.xml.rels')?.async('text');
+    const documentXml = await loadedZip.file('word/document.xml')?.async('text');
+    const relationshipsXml = await loadedZip.file('word/_rels/document.xml.rels')?.async('text');
     
     if (!documentXml || !relationshipsXml) {
       console.warn("Could not find document.xml or relationships file");
@@ -363,8 +421,9 @@ const extractImages = async (
     const imageFiles: { [key: string]: { data: Blob, contentType: string } } = {};
     
     // First collect all images from word/media
-    for (const filePath in zip.files) {
-      const fileObj = zip.files[filePath];
+    const zipFiles = loadedZip.files;
+    for (const filePath in zipFiles) {
+      const fileObj = zipFiles[filePath];
       
       if (filePath.startsWith('word/media/') && !fileObj.dir) {
         try {

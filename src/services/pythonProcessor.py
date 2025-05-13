@@ -1,4 +1,3 @@
-
 import os
 import re
 import sys
@@ -53,10 +52,28 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
         # Process each table in the document (assume first table contains tasks)
         table = doc.tables[0]
         
+        # Check if first row is likely a header
+        header_row = table.rows[0]
+        is_header = False
+        
+        # Check if first row contains header-like text
+        header_terms = ['sl no', 'sl.no', 'sl. no', 'serial no', 'task no', 'job details']
+        header_cell_texts = [cell.text.lower().strip() for cell in header_row.cells]
+        
+        for term in header_terms:
+            if any(term in text for text in header_cell_texts):
+                is_header = True
+                logger.info(f"Detected header row: {' | '.join([cell.text for cell in header_row.cells])}")
+                break
+        
         # Process each row of the table (skipping header if exists)
         for i, row in enumerate(table.rows):
-            # Skip if it's likely a header row
-            if i == 0 and any(cell.text.lower() in ['sl no', 'sl.no', 'sl. no', 'serial no', 'task no'] for cell in row.cells):
+            # Skip if it's the header row we identified
+            if i == 0 and is_header:
+                continue
+                
+            # Skip if it's likely another header row
+            if any(cell.text.lower().strip() in header_terms for cell in row.cells):
                 continue
             
             # Extract data from cells
