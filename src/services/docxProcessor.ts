@@ -1,6 +1,6 @@
 import * as mammoth from 'mammoth';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from 'docx';
-import JSZip from 'jszip';
+import * as JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { Task } from '@/components/TaskPreview';
 import * as XLSX from 'xlsx';
@@ -167,8 +167,8 @@ const extractTasks = (
   docTitle: string, 
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
   assemblySequenceId: string = '1'
-): any[] => {
-  const tasks: any[] = [];
+): Task[] => {
+  const tasks: Task[] = [];
   let currentTaskIndex = 0;
   let currentTask = '';
   
@@ -239,8 +239,8 @@ const extractTasksAggressively = (
   docTitle: string,
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
   assemblySequenceId: string = '1'
-): any[] => {
-  const tasks: any[] = [];
+): Task[] => {
+  const tasks: Task[] = [];
   
   // Split by potential paragraph markers
   const paragraphs = content.split(/\n\n|\r\n\r\n/).filter(p => p.trim().length > 0);
@@ -283,8 +283,8 @@ const extractTasksFromTable = (
   docTitle: string,
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
   assemblySequenceId: string = '1'
-): any[] => {
-  const tasks: any[] = [];
+): Task[] => {
+  const tasks: Task[] = [];
   const lines = content.split('\n').filter(line => line.trim().length > 0);
   let taskIndex = 1;
   
@@ -362,9 +362,12 @@ const extractImages = async (
     
     // First collect all images from word/media
     for (const [filePath, fileObj] of Object.entries(zip.files)) {
-      if (filePath.startsWith('word/media/') && !fileObj.dir) {
+      // Type guard to ensure we're dealing with a JSZip file object
+      const zipObj = fileObj as unknown as { dir?: boolean, async: (type: string) => Promise<Blob> };
+      
+      if (filePath.startsWith('word/media/') && !zipObj.dir) {
         try {
-          const imageData = await fileObj.async('blob');
+          const imageData = await zipObj.async('blob');
           const contentType = getContentTypeFromPath(filePath);
           const imageName = filePath.split('/').pop() || '';
           imageFiles[imageName] = { data: imageData, contentType };
