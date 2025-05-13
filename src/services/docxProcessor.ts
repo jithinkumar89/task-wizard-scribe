@@ -3,13 +3,14 @@ import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from
 import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { Task } from '@/components/TaskPreview';
+import * as XLSX from 'xlsx';
 
 // Interface for extracted content
 interface ExtractedContent {
   docTitle: string;
   tasks: Task[];
   images: Array<{
-    task_no: string;  // Changed from taskNumber to match Task interface
+    task_no: string;
     imageData: Blob;
     contentType: string;
   }>;
@@ -79,27 +80,74 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
       console.log(`Alternative extraction found ${tasks.length} tasks`);
     }
     
-    // Convert to new task format with task_no instead of taskNumber
-    const convertedTasks = tasks.map(task => ({
-      task_no: task.task_no || `${assemblySequenceId}.0.${task.taskNumber?.toString().padStart(3, '0')}`,
-      type: task.type,
-      eta_sec: task.eta_sec || task.etaSec,
-      description: task.description,
-      activity: task.activity,
-      specification: task.specification,
-      attachment: task.hasImage ? task.attachment : '',
-      hasImage: task.hasImage
-    })) as Task[];
+    // Map images to tasks based on figure references
+    tasks = mapImagesToTasks(tasks, images, result.value);
     
     return {
       docTitle,
-      tasks: convertedTasks,
+      tasks,
       images
     };
   } catch (error) {
     console.error('Error processing document:', error);
     throw new Error('Failed to process the document. Please check the file format.');
   }
+};
+
+// Map images to tasks based on figure references in the text
+const mapImagesToTasks = (
+  tasks: Task[], 
+  images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
+  documentText: string
+): Task[] => {
+  // Create a mapping of tasks to image references
+  const taskImageMapping: Record<string, string[]> = {};
+  
+  // Extract figure references from document text
+  const figurePattern = /figure\s+(\d+)/gi;
+  let figureMatch;
+  const figureReferences: number[] = [];
+  
+  while ((figureMatch = figurePattern.exec(documentText)) !== null) {
+    figureReferences.push(parseInt(figureMatch[1], 10));
+  }
+  
+  // Map each task to the images it references
+  tasks.forEach(task => {
+    // Extract the task content
+    const taskContent = task.activity;
+    const taskFigures: string[] = [];
+    
+    // Look for figure references in this task
+    const taskFigurePattern = /figure\s+(\d+)/gi;
+    let taskFigureMatch;
+    
+    while ((taskFigureMatch = taskFigurePattern.exec(taskContent)) !== null) {
+      const figureNum = parseInt(taskFigureMatch[1], 10);
+      const imageId = formatImageId(figureNum, task.task_no?.split('.')[0] || '1');
+      taskFigures.push(imageId);
+    }
+    
+    // Store the mapping
+    if (taskFigures.length > 0) {
+      taskImageMapping[task.task_no || ''] = taskFigures;
+    }
+  });
+  
+  // Update tasks with their image references
+  return tasks.map(task => {
+    const taskImages = taskImageMapping[task.task_no || ''] || [];
+    return {
+      ...task,
+      attachment: taskImages.join(', '),
+      hasImage: taskImages.length > 0
+    };
+  });
+};
+
+// Format image ID from figure number and assembly ID
+const formatImageId = (figureNumber: number, assemblyId: string): string => {
+  return `${assemblyId}-0-${figureNumber.toString().padStart(3, '0')}`;
 };
 
 // Detect if the document likely has a table structure
@@ -143,9 +191,6 @@ const extractTasks = (
         currentTaskIndex++;
         const formatted = formatTaskNumber(currentTaskIndex.toString(), assemblySequenceId);
         
-        // Find if this step has an associated image
-        const hasImage = images.some(img => img.task_no === formatted);
-        
         tasks.push({
           task_no: formatted, // Updated to use task_no instead of taskNumber
           type: 'Operation',
@@ -153,8 +198,8 @@ const extractTasks = (
           description: trimmedLine.substring(stepMatch[0].length).trim(),
           activity: currentTask.trim(),
           specification: '',
-          attachment: hasImage ? formatted : '',
-          hasImage: hasImage
+          attachment: '',
+          hasImage: false
         });
       }
       
@@ -172,17 +217,16 @@ const extractTasks = (
   if (currentTask) {
     currentTaskIndex++;
     const formatted = formatTaskNumber(currentTaskIndex.toString(), assemblySequenceId);
-    const hasImage = images.some(img => img.task_no === formatted);
     
     tasks.push({
-      task_no: formatted, // Updated to use task_no
+      task_no: formatted,
       type: 'Operation',
       eta_sec: '',
       description: currentTask.trim(),
       activity: currentTask.trim(),
       specification: '',
-      attachment: hasImage ? formatted : '',
-      hasImage: hasImage
+      attachment: '',
+      hasImage: false
     });
   }
   
@@ -215,17 +259,16 @@ const extractTasksAggressively = (
     }
     
     const formatted = formatTaskNumber(taskIndex.toString(), assemblySequenceId);
-    const hasImage = images.some(img => img.task_no === formatted);
     
     tasks.push({
-      task_no: formatted, // Updated to use task_no
+      task_no: formatted,
       type: 'Operation',
       eta_sec: '',
       description: paragraph.trim(),
       activity: paragraph.trim(),
       specification: '',
-      attachment: hasImage ? formatted : '',
-      hasImage: hasImage
+      attachment: '',
+      hasImage: false
     });
     
     taskIndex++;
@@ -257,17 +300,16 @@ const extractTasksFromTable = (
       const restOfLine = line.substring(match[0].length).trim();
       
       const formatted = formatTaskNumber(taskIndex.toString(), assemblySequenceId);
-      const hasImage = images.some(img => img.task_no === formatted);
       
       tasks.push({
-        task_no: formatted, // Updated to use task_no
+        task_no: formatted,
         type: 'Operation',
         eta_sec: '',
         description: restOfLine,
         activity: restOfLine,
         specification: '',
-        attachment: hasImage ? formatted : '',
-        hasImage: hasImage
+        attachment: '',
+        hasImage: false
       });
     }
   }
@@ -334,61 +376,63 @@ const extractImages = async (
     
     console.log(`Found ${Object.keys(imageFiles).length} image files in the document`);
     
-    // Extract image references and their associated step numbers from HTML content
-    const imageRelationshipRegex = /<img[^>]+src="([^"]+)"[^>]*>/g;
-    const imageSections = htmlContent.split('<p>');
+    // Extract figure references from HTML content
+    const figurePattern = /Figure\s+(\d+)/gi;
+    let figureMatch;
+    const figureNumbers: number[] = [];
     
-    // Map for storing the last encountered step number
-    let lastStepNumber = "1";
-    let imageIndex = 1;
-    
-    for (let i = 0; i < imageSections.length; i++) {
-      const section = imageSections[i];
-      
-      // Look for step numbers before images
-      for (const pattern of stepNumberPatterns) {
-        const stepMatch = section.match(pattern);
-        if (stepMatch) {
-          lastStepNumber = stepMatch[1];
-          break;
-        }
-      }
-      
-      // Format the task number based on the assembly sequence ID and step number
-      const task_no = formatTaskNumber(lastStepNumber, assemblySequenceId);
-      
-      // Look for image tags
-      let imgMatch;
-      while ((imgMatch = imageRelationshipRegex.exec(section)) !== null) {
-        const imgSrc = imgMatch[1];
-        // Extract the file name or relationship ID
-        const imgRelId = imgSrc.split('/').pop()?.replace('rId', '') || '';
-        
-        // Try to find the actual image file
-        for (const [imageName, imageInfo] of Object.entries(imageFiles)) {
-          if (imageName.includes(imgRelId)) {
-            images.push({
-              task_no: task_no, // Updated to use task_no
-              imageData: imageInfo.data,
-              contentType: imageInfo.contentType
-            });
-            break;
-          }
-        }
+    // Find all figure references in the document
+    while ((figureMatch = figurePattern.exec(htmlContent)) !== null) {
+      const figNum = parseInt(figureMatch[1], 10);
+      if (!figureNumbers.includes(figNum)) {
+        figureNumbers.push(figNum);
       }
     }
     
-    // If we haven't found any images using the relationship method, 
-    // just assign images sequentially to tasks
-    if (images.length === 0 && Object.keys(imageFiles).length > 0) {
-      console.log("Using sequential image assignment as fallback");
+    // Sort figure numbers
+    figureNumbers.sort((a, b) => a - b);
+    
+    // Map figure numbers to images
+    if (figureNumbers.length > 0 && Object.keys(imageFiles).length > 0) {
+      // For each figure reference, assign an image
+      const imageEntries = Object.entries(imageFiles);
+      figureNumbers.forEach((figNum, index) => {
+        if (index < imageEntries.length) {
+          const [imageName, imageInfo] = imageEntries[index];
+          // Use the figure number in the image ID
+          const imageId = `${assemblySequenceId}-0-${figNum.toString().padStart(3, '0')}`;
+          images.push({
+            task_no: imageId,
+            imageData: imageInfo.data,
+            contentType: imageInfo.contentType
+          });
+        }
+      });
+      
+      // Handle any remaining images
+      if (imageEntries.length > figureNumbers.length) {
+        for (let i = figureNumbers.length; i < imageEntries.length; i++) {
+          const [imageName, imageInfo] = imageEntries[i];
+          const nextFigNum = (figureNumbers.length > 0 ? Math.max(...figureNumbers) : 0) + (i - figureNumbers.length + 1);
+          const imageId = `${assemblySequenceId}-0-${nextFigNum.toString().padStart(3, '0')}`;
+          images.push({
+            task_no: imageId,
+            imageData: imageInfo.data,
+            contentType: imageInfo.contentType
+          });
+        }
+      }
+    } else {
+      // If no figure references, just assign sequential IDs
+      let imgIndex = 1;
       for (const [imageName, imageInfo] of Object.entries(imageFiles)) {
+        const imageId = `${assemblySequenceId}-0-${imgIndex.toString().padStart(3, '0')}`;
         images.push({
-          task_no: formatTaskNumber(imageIndex.toString(), assemblySequenceId),
+          task_no: imageId,
           imageData: imageInfo.data,
           contentType: imageInfo.contentType
         });
-        imageIndex++;
+        imgIndex++;
       }
     }
     
@@ -422,125 +466,54 @@ const getContentTypeFromPath = (path: string): string => {
 // Generate an Excel file from extracted tasks
 export const generateExcelFile = async (tasks: Task[], docTitle: string): Promise<Blob> => {
   try {
-    // This is a simplified Excel creation using CSV format
-    // For a real implementation, you would use a library like xlsx
+    // Create workbook
+    const wb = XLSX.utils.book_new();
     
-    // Create CSV header
-    const headers = ["task_no", "type", "eta_sec", "description", "activity", "specification", "attachment"];
-    let csvContent = headers.join(",") + "\n";
+    // Convert tasks to format for Excel
+    const excelData = tasks.map(task => ({
+      task_no: task.task_no,
+      type: task.type,
+      eta_sec: task.eta_sec,
+      description: task.description,
+      activity: task.activity,
+      specification: task.specification,
+      attachment: task.attachment
+    }));
     
-    // Add rows
-    tasks.forEach(task => {
-      // Escape CSV values properly
-      const escapeCsv = (value: string) => {
-        if (value === null || value === undefined) return '';
-        return `"${String(value).replace(/"/g, '""')}"`;
-      };
-      
-      const row = [
-        escapeCsv(task.task_no),
-        escapeCsv(task.type),
-        escapeCsv(task.eta_sec),
-        escapeCsv(task.description),
-        escapeCsv(task.activity),
-        escapeCsv(task.specification),
-        escapeCsv(task.attachment)
-      ].join(",");
-      
-      csvContent += row + "\n";
-    });
+    // Create worksheet
+    const ws = XLSX.utils.json_to_sheet(excelData);
     
-    return new Blob([csvContent], { type: "text/csv;charset=utf-8" });
+    // Add red formatting for first 3 column headers - note: client-side Excel generation has limited formatting capabilities
+    
+    // Add worksheet to workbook
+    XLSX.utils.book_append_sheet(wb, ws, "Tasks");
+    
+    // Generate Excel file
+    const excelBlob = new Blob(
+      [XLSX.write(wb, { bookType: 'xlsx', type: 'array' })], 
+      { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }
+    );
+    
+    return excelBlob;
   } catch (error) {
     console.error("Error generating Excel file:", error);
     throw new Error("Failed to generate Excel file");
   }
 };
 
-// Generate a task master document from extracted tasks
-export const generateTaskMasterDocument = (docTitle: string, tasks: Task[]): Blob => {
-  const doc = new Document({
-    sections: [
-      {
-        properties: {},
-        children: [
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: docTitle,
-                bold: true,
-                size: 28
-              })
-            ]
-          }),
-          new Paragraph({
-            children: [
-              new TextRun({
-                text: "Task Master",
-                bold: true,
-                size: 24
-              })
-            ],
-            spacing: { after: 400 }
-          }),
-          new Table({
-            rows: [
-              new TableRow({
-                tableHeader: true,
-                children: [
-                  new TableCell({ children: [new Paragraph("Task No")] }),
-                  new TableCell({ children: [new Paragraph("Type")] }),
-                  new TableCell({ children: [new Paragraph("ETA (sec)")] }),
-                  new TableCell({ children: [new Paragraph("Description")] }),
-                  new TableCell({ children: [new Paragraph("Activity")] }),
-                  new TableCell({ children: [new Paragraph("Specification")] }),
-                  new TableCell({ children: [new Paragraph("Attachment")] })
-                ]
-              }),
-              ...tasks.map(task => 
-                new TableRow({
-                  children: [
-                    new TableCell({ children: [new Paragraph(task.task_no)] }),
-                    new TableCell({ children: [new Paragraph(task.type)] }),
-                    new TableCell({ children: [new Paragraph(task.eta_sec)] }),
-                    new TableCell({ children: [new Paragraph(task.description)] }),
-                    new TableCell({ children: [new Paragraph(task.activity)] }),
-                    new TableCell({ children: [new Paragraph(task.specification)] }),
-                    new TableCell({ children: [new Paragraph(task.hasImage ? task.attachment : "")] })
-                  ]
-                })
-              )
-            ]
-          })
-        ]
-      }
-    ]
-  });
-  
-  // FIX: Ensure this returns a Blob, not a Promise<Blob>
-  return Packer.toBlob(doc) as unknown as Blob;
-};
-
 // Create a ZIP file containing task master document and extracted images
 export const createDownloadPackage = async (
-  docBlob: Blob, 
+  excelBlob: Blob, 
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
-  docTitle: string,
-  logoBuffer?: ArrayBuffer
+  docTitle: string
 ): Promise<Blob> => {
   const zip = new JSZip();
   
-  // Add the generated document/Excel file
-  const fileExtension = docBlob.type.includes('excel') || docBlob.type.includes('csv') ? 'xlsx' : 'docx';
-  zip.file(`${docTitle} - Task Master.${fileExtension}`, docBlob);
+  // Add the generated Excel file
+  zip.file(`${docTitle} - Task Master.xlsx`, excelBlob);
   
   // Create images folder
   const imagesFolder = zip.folder("images");
-  
-  // Add logo if provided
-  if (logoBuffer && imagesFolder) {
-    imagesFolder.file("logo.png", logoBuffer);
-  }
   
   // Add each image with the appropriate name
   if (imagesFolder) {

@@ -14,6 +14,8 @@ import base64
 import zipfile
 import json
 import logging
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Color
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
@@ -41,6 +43,7 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
         tasks = []
         images = {}
         image_map = {}  # Map to track figure references to image_ids
+        image_task_mapping = {}  # Map to track which tasks reference which images
         
         # Find tables in the document
         if len(doc.tables) == 0:
@@ -71,8 +74,8 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
                     logger.warning(f"Could not parse sl_no from '{sl_no_cell}', skipping row")
                     continue
                 
-                # Generate task number in the format assembly_id-0-XXX
-                task_number = f"{assembly_id}-0-{str(sl_no).zfill(3)}"
+                # Generate task number in the format assembly_id.0.XXX
+                task_number = f"{assembly_id}.0.{str(sl_no).zfill(3)}"
                 
                 # Extract job details text and process paragraphs
                 job_details = ""
@@ -89,16 +92,17 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
                     for match in matches:
                         fig_num = int(match)
                         if figure_start_range <= fig_num <= figure_end_range:
-                            # Generate image ID for this figure
-                            # We use the figure number directly for mapping
-                            if fig_num not in image_map:
-                                # Only create a new ID if we haven't seen this figure number yet
-                                image_id = f"{assembly_id}-0-{str(len(image_map) + 1).zfill(3)}"
-                                image_map[fig_num] = image_id
+                            # Generate image ID for this figure (format: assembly_id-0-XXX)
+                            image_id = f"{assembly_id}-0-{str(fig_num).zfill(3)}"
                             
-                            # Add this image ID to the current task's references
-                            if image_map[fig_num] not in image_references:
-                                image_references.append(image_map[fig_num])
+                            # Track which figures are referenced by this task
+                            if task_number not in image_task_mapping:
+                                image_task_mapping[task_number] = set()
+                            
+                            image_task_mapping[task_number].add(image_id)
+                            
+                            # Track figure number to image ID mapping
+                            image_map[fig_num] = image_id
                 
                 # Create task entry with attachment information
                 task = {
@@ -108,7 +112,7 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
                     'description': assembly_name,  # Use the provided assembly name as description
                     'activity': job_details.strip(),
                     'specification': '',
-                    'attachment': ', '.join(image_references) if image_references else ''
+                    'attachment': ''  # Will be populated after processing all tasks and images
                 }
                 
                 tasks.append(task)
@@ -117,7 +121,7 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
                 logger.error(f"Error processing row {i}: {e}")
                 continue
         
-        # Extract all images from document with reliable mapping
+        # Extract all images from document
         all_rels = []
         
         # Get all the relationships in the document
@@ -136,29 +140,32 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
         logger.info(f"Found {len(all_rels)} images in document relationships")
         logger.info(f"Found {len(image_map)} figure references in text")
         
-        # Map the figure numbers to actual images
-        # In this simplified approach, we'll assign images sequentially to figure numbers
-        sorted_figures = sorted(image_map.keys())
-        
         # Create final image dictionary with proper IDs
-        for i, fig_num in enumerate(sorted_figures):
-            if i < len(all_rels):
-                image_id = image_map[fig_num]
+        for fig_num, image_id in image_map.items():
+            # Find the corresponding image data
+            image_idx = fig_num - figure_start_range
+            if 0 <= image_idx < len(all_rels):
                 images[image_id] = {
-                    'data': all_rels[i]['data'],
-                    'extension': all_rels[i]['extension'],
+                    'data': all_rels[image_idx]['data'],
+                    'extension': all_rels[image_idx]['extension'],
                     'figure_number': fig_num
                 }
         
         # If we have more images than figure references, add them with sequential IDs
-        if len(all_rels) > len(sorted_figures):
-            for i in range(len(sorted_figures), len(all_rels)):
-                image_id = f"{assembly_id}-0-{str(len(images) + 1).zfill(3)}"
-                images[image_id] = {
-                    'data': all_rels[i]['data'],
-                    'extension': all_rels[i]['extension'],
-                    'figure_number': None  # No specific figure number
-                }
+        for i in range(len(image_map), len(all_rels)):
+            next_num = len(image_map) + i + 1
+            image_id = f"{assembly_id}-0-{str(next_num).zfill(3)}"
+            images[image_id] = {
+                'data': all_rels[i]['data'],
+                'extension': all_rels[i]['extension'],
+                'figure_number': None  # No specific figure number
+            }
+        
+        # Now update each task with its attachment information (comma-separated image IDs)
+        for task in tasks:
+            task_num = task['task_no']
+            if task_num in image_task_mapping:
+                task['attachment'] = ', '.join(sorted(list(image_task_mapping[task_num])))
         
         # Create DataFrame
         if tasks:
@@ -184,7 +191,7 @@ def guess_image_extension(image_data):
 
 def save_tasks_to_excel(df, assembly_name, output_path):
     """
-    Save tasks to Excel file.
+    Save tasks to Excel file with proper formatting.
     
     Args:
         df: DataFrame containing tasks
@@ -208,8 +215,25 @@ def save_tasks_to_excel(df, assembly_name, output_path):
             # Ensure the description is set to assembly name for all rows
             df['description'] = assembly_name
             
+            # Create a new Excel workbook with proper formatting
+            wb = Workbook()
+            ws = wb.active
+            
+            # Add headers with formatting
+            headers = ['task_no', 'type', 'eta_sec', 'description', 'activity', 'specification', 'attachment']
+            for col_idx, header in enumerate(headers, 1):
+                cell = ws.cell(row=1, column=col_idx, value=header)
+                # Apply red font color to first 3 columns
+                if col_idx <= 3:
+                    cell.font = Font(color="FF0000")
+            
+            # Add data rows
+            for row_idx, row in enumerate(df.itertuples(index=False), 2):
+                for col_idx, value in enumerate(row, 1):
+                    ws.cell(row=row_idx, column=col_idx, value=value)
+            
             # Save to Excel
-            df.to_excel(output_path, index=False)
+            wb.save(output_path)
             return True
         return False
     except Exception as e:
@@ -235,7 +259,7 @@ def save_images(images, output_dir):
         logger.error(f"Error saving images: {e}")
         return False
 
-def create_zip_package(excel_path, images_dir, output_path, logo_path=None):
+def create_zip_package(excel_path, images_dir, output_path):
     """
     Create a ZIP package containing Excel file and images.
     
@@ -243,16 +267,11 @@ def create_zip_package(excel_path, images_dir, output_path, logo_path=None):
         excel_path: Path to Excel file
         images_dir: Directory containing images
         output_path: Path to save the ZIP file
-        logo_path: Optional path to logo image
     """
     try:
         with zipfile.ZipFile(output_path, 'w') as zipf:
             # Add Excel file
             zipf.write(excel_path, arcname=os.path.basename(excel_path))
-            
-            # Add logo if provided
-            if logo_path and os.path.exists(logo_path):
-                zipf.write(logo_path, arcname=os.path.join('images', 'logo.png'))
             
             # Add images
             for root, _, files in os.walk(images_dir):
@@ -266,7 +285,7 @@ def create_zip_package(excel_path, images_dir, output_path, logo_path=None):
         return False
 
 # Main function to process document
-def process_document(input_file, assembly_id, assembly_name, figure_start, figure_end, logo_path=None):
+def process_document(input_file, assembly_id, assembly_name, figure_start, figure_end):
     """
     Process a Word document to extract tasks and images.
     
@@ -276,7 +295,6 @@ def process_document(input_file, assembly_id, assembly_name, figure_start, figur
         assembly_name: Name of the assembly (description)
         figure_start: Starting figure reference number
         figure_end: Ending figure reference number
-        logo_path: Optional path to logo file
     
     Returns:
         Dictionary with processing results
@@ -311,7 +329,7 @@ def process_document(input_file, assembly_id, assembly_name, figure_start, figur
         
         # Create ZIP package
         zip_path = os.path.join(os.path.dirname(input_file), f"{assembly_name}_Package.zip")
-        create_zip_package(excel_path, images_dir, zip_path, logo_path)
+        create_zip_package(excel_path, images_dir, zip_path)
         
         # Return results
         return {
@@ -329,7 +347,7 @@ def process_document(input_file, assembly_id, assembly_name, figure_start, figur
 # Command line interface
 if __name__ == "__main__":
     if len(sys.argv) < 6:
-        print("Usage: python script.py input_file assembly_id assembly_name figure_start figure_end [logo_path]")
+        print("Usage: python script.py input_file assembly_id assembly_name figure_start figure_end")
         sys.exit(1)
     
     input_file = sys.argv[1]
@@ -338,12 +356,6 @@ if __name__ == "__main__":
     figure_start = int(sys.argv[4])
     figure_end = int(sys.argv[5])
     
-    # Optional logo path
-    logo_path = None
-    if len(sys.argv) > 6:
-        logo_path = sys.argv[6]
-    
-    result = process_document(input_file, assembly_id, assembly_name, figure_start, figure_end, logo_path)
+    result = process_document(input_file, assembly_id, assembly_name, figure_start, figure_end)
     # Print as JSON for the Node.js wrapper to parse
     print(json.dumps(result))
-

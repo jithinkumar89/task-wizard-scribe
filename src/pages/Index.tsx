@@ -1,3 +1,4 @@
+
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -16,7 +17,6 @@ type ProcessingStatus = 'idle' | 'parsing' | 'extracting' | 'generating' | 'comp
 
 const Index = () => {
   const [file, setFile] = useState<File | null>(null);
-  const [logoFile, setLogoFile] = useState<File | null>(null);
   const [status, setStatus] = useState<ProcessingStatus>('idle');
   const [progress, setProgress] = useState(0);
   const [tasks, setTasks] = useState<Task[]>([]);
@@ -130,21 +130,20 @@ const Index = () => {
       
       console.log(`Successfully extracted ${extractedContent.tasks.length} tasks`);
       
-      // Generate the Task Master document if not already done by Python implementation
-      if (!downloadPackage) {
+      // Generate the Excel file if not already done by Python implementation
+      if (!excelFile) {
         setStatus('generating');
         setProgress(80);
         
-        // Generate Excel file (same format as task preview)
+        // Generate Excel file
         const excelBlob = await generateExcelFile(extractedContent.tasks, assemblyName);
         setExcelFile(excelBlob);
         
         // Create downloadable package
         const zipBlob = await createDownloadPackage(
-          excelBlob,  // Using Excel blob instead of Word doc
+          excelBlob,
           extractedContent.images || [],
-          extractedContent.docTitle || assemblyName || 'Unnamed Document',
-          logoFile ? await logoFile.arrayBuffer() : undefined
+          extractedContent.docTitle || assemblyName || 'Unnamed Document'
         );
         setDownloadPackage(zipBlob);
       }
@@ -169,23 +168,6 @@ const Index = () => {
         description: (error as Error).message || 'Unknown error occurred'
       });
     }
-  };
-
-  // Generate Excel file from tasks
-  const generateExcelFile = async (tasks: Task[], assemblyName: string): Promise<Blob> => {
-    // This is a placeholder - in a real implementation, we would use a library like xlsx
-    // to generate an Excel file from the tasks data
-    // For now, we're just returning a simple Excel-like format
-    
-    console.log("Would generate Excel with tasks:", tasks);
-    
-    // Use Blob to create a downloadable file (CSV format as a simple example)
-    const header = "task_no,type,eta_sec,description,activity,specification,attachment\n";
-    const rows = tasks.map(task => {
-      return `"${task.task_no}","${task.type}","${task.eta_sec}","${task.description}","${task.activity.replace(/"/g, '""')}","${task.specification}","${task.attachment}"`;
-    }).join("\n");
-    
-    return new Blob([header + rows], { type: "application/vnd.ms-excel" });
   };
 
   // Handle package download
@@ -213,7 +195,7 @@ const Index = () => {
   // Handle images-only download
   const handleImagesDownload = () => {
     if (downloadPackage) {
-      // The docxProcessor.createDownloadPackage already creates a zip with images folder
+      // The createDownloadPackage already creates a zip with images folder
       saveAs(downloadPackage, `${docTitle || assemblyName || 'Task_Master'} - Images.zip`);
       toast({
         title: "Images download started",

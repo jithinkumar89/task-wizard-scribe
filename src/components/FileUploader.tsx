@@ -1,18 +1,17 @@
 
 import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
-import { Upload, File, Check, Image } from 'lucide-react';
+import { Upload, File, Check } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
 interface FileUploaderProps {
-  onFileSelect: (file: File, logoFile?: File) => void;
+  onFileSelect: (file: File) => void;
   isProcessing?: boolean;
 }
 
 const FileUploader = ({ onFileSelect, isProcessing = false }: FileUploaderProps) => {
   const [isDragging, setIsDragging] = useState(false);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
-  const [logoFile, setLogoFile] = useState<File | null>(null);
   const { toast } = useToast();
   
   const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
@@ -39,25 +38,6 @@ const FileUploader = ({ onFileSelect, isProcessing = false }: FileUploaderProps)
     }
   };
 
-  const handleLogoChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files?.length) {
-      const file = e.target.files[0];
-      if (!file.type.startsWith('image/')) {
-        toast({
-          variant: "destructive",
-          title: "Invalid logo format",
-          description: "Please upload an image file"
-        });
-        return;
-      }
-      setLogoFile(file);
-      toast({
-        title: "Logo selected",
-        description: `"${file.name}" will be used as the logo.`
-      });
-    }
-  };
-
   const validateAndSetFile = (file: File) => {
     if (file.type !== 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
       toast({
@@ -77,7 +57,7 @@ const FileUploader = ({ onFileSelect, isProcessing = false }: FileUploaderProps)
 
   const handleProcess = () => {
     if (selectedFile) {
-      onFileSelect(selectedFile, logoFile || undefined);
+      onFileSelect(selectedFile);
     }
   };
 
@@ -115,35 +95,6 @@ const FileUploader = ({ onFileSelect, isProcessing = false }: FileUploaderProps)
           >
             {isProcessing ? 'Processing...' : 'Select File'}
           </Button>
-        </div>
-      </div>
-      
-      {/* Logo upload section */}
-      <div className="border rounded-lg p-4 bg-gray-50">
-        <div className="flex items-center space-x-3 mb-3">
-          <Image className="h-5 w-5 text-sop-blue" />
-          <p className="font-medium">Upload Logo (Optional)</p>
-        </div>
-        <div className="flex items-center space-x-2">
-          <input
-            type="file"
-            id="logo-upload"
-            className="hidden"
-            accept="image/*"
-            onChange={handleLogoChange}
-            disabled={isProcessing}
-          />
-          <Button 
-            onClick={() => document.getElementById('logo-upload')?.click()}
-            variant="outline"
-            size="sm"
-            disabled={isProcessing}
-          >
-            Select Logo
-          </Button>
-          {logoFile && (
-            <span className="text-sm text-gray-600">{logoFile.name}</span>
-          )}
         </div>
       </div>
       
