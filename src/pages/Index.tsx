@@ -3,7 +3,7 @@ import React, { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Download, HelpCircle, FileText } from 'lucide-react';
-import { useToast } from '@/components/ui/use-toast';
+import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import FileUploader from '@/components/FileUploader';
@@ -135,17 +135,22 @@ const Index = () => {
         setStatus('generating');
         setProgress(80);
         
-        // Generate Excel file
-        const excelBlob = await generateExcelFile(extractedContent.tasks, assemblyName);
-        setExcelFile(excelBlob);
-        
-        // Create downloadable package
-        const zipBlob = await createDownloadPackage(
-          excelBlob,
-          extractedContent.images || [],
-          extractedContent.docTitle || assemblyName || 'Unnamed Document'
-        );
-        setDownloadPackage(zipBlob);
+        try {
+          // Generate Excel file
+          const excelBlob = await generateExcelFile(extractedContent.tasks, assemblyName || extractedContent.docTitle);
+          setExcelFile(excelBlob);
+          
+          // Create downloadable package
+          const zipBlob = await createDownloadPackage(
+            excelBlob,
+            extractedContent.images || [],
+            extractedContent.docTitle || assemblyName || 'Unnamed Document'
+          );
+          setDownloadPackage(zipBlob);
+        } catch (error) {
+          console.error("Error generating download files:", error);
+          throw new Error("Failed to create download files. Please try again or check file format.");
+        }
       }
       
       // Complete
@@ -351,33 +356,39 @@ const Index = () => {
               <TaskPreview tasks={tasks} documentTitle={docTitle || assemblyName} />
               
               {/* Download buttons */}
-              {status === 'complete' && downloadPackage && (
+              {status === 'complete' && (
                 <div className="flex flex-wrap justify-center mt-6 gap-4">
-                  <Button 
-                    onClick={handleDownload}
-                    className="bg-sop-blue hover:bg-sop-lightBlue px-6 py-2"
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Complete Package
-                  </Button>
+                  {downloadPackage && (
+                    <Button 
+                      onClick={handleDownload}
+                      className="bg-sop-blue hover:bg-sop-lightBlue px-6 py-2"
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download Complete Package
+                    </Button>
+                  )}
                   
-                  <Button 
-                    onClick={handleExcelDownload}
-                    variant="outline"
-                    className="px-6 py-2"
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Excel File
-                  </Button>
+                  {excelFile && (
+                    <Button 
+                      onClick={handleExcelDownload}
+                      variant="outline"
+                      className="px-6 py-2"
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download Excel File
+                    </Button>
+                  )}
                   
-                  <Button 
-                    onClick={handleImagesDownload}
-                    variant="outline"
-                    className="px-6 py-2"
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Images Only
-                  </Button>
+                  {downloadPackage && (
+                    <Button 
+                      onClick={handleImagesDownload}
+                      variant="outline"
+                      className="px-6 py-2"
+                    >
+                      <Download className="mr-2 h-4 w-4" />
+                      Download Images Only
+                    </Button>
+                  )}
                 </div>
               )}
               

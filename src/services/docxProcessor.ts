@@ -1,6 +1,7 @@
+
 import * as mammoth from 'mammoth';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from 'docx';
-import * as JSZip from 'jszip';
+import JSZip from 'jszip';
 import { saveAs } from 'file-saver';
 import { Task } from '@/components/TaskPreview';
 import * as XLSX from 'xlsx';
@@ -333,6 +334,7 @@ const extractImages = async (
   assemblySequenceId: string = '1'
 ): Promise<Array<{ task_no: string; imageData: Blob; contentType: string }>> => {
   try {
+    // Create a new JSZip instance - fixed constructor issue
     const zip = new JSZip();
     await zip.loadAsync(await file.arrayBuffer());
     
@@ -361,13 +363,12 @@ const extractImages = async (
     const imageFiles: { [key: string]: { data: Blob, contentType: string } } = {};
     
     // First collect all images from word/media
-    for (const [filePath, fileObj] of Object.entries(zip.files)) {
-      // Type guard to ensure we're dealing with a JSZip file object
-      const zipObj = fileObj as unknown as { dir?: boolean, async: (type: string) => Promise<Blob> };
+    for (const filePath in zip.files) {
+      const fileObj = zip.files[filePath];
       
-      if (filePath.startsWith('word/media/') && !zipObj.dir) {
+      if (filePath.startsWith('word/media/') && !fileObj.dir) {
         try {
-          const imageData = await zipObj.async('blob');
+          const imageData = await fileObj.async('blob');
           const contentType = getContentTypeFromPath(filePath);
           const imageName = filePath.split('/').pop() || '';
           imageFiles[imageName] = { data: imageData, contentType };
@@ -486,8 +487,6 @@ export const generateExcelFile = async (tasks: Task[], docTitle: string): Promis
     // Create worksheet
     const ws = XLSX.utils.json_to_sheet(excelData);
     
-    // Add red formatting for first 3 column headers - note: client-side Excel generation has limited formatting capabilities
-    
     // Add worksheet to workbook
     XLSX.utils.book_append_sheet(wb, ws, "Tasks");
     
@@ -510,6 +509,7 @@ export const createDownloadPackage = async (
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
   docTitle: string
 ): Promise<Blob> => {
+  // Create a new JSZip instance
   const zip = new JSZip();
   
   // Add the generated Excel file
