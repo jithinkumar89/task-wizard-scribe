@@ -1,3 +1,4 @@
+
 import os
 import re
 import sys
@@ -276,7 +277,7 @@ def save_images(images, output_dir):
         logger.error(f"Error saving images: {e}")
         return False
 
-def create_zip_package(excel_path, images_dir, output_path):
+def create_zip_package(excel_path, images_dir, output_path, assembly_name):
     """
     Create a ZIP package containing Excel file and images.
     
@@ -284,6 +285,7 @@ def create_zip_package(excel_path, images_dir, output_path):
         excel_path: Path to Excel file
         images_dir: Directory containing images
         output_path: Path to save the ZIP file
+        assembly_name: Name of the assembly to use for file naming
     """
     try:
         with zipfile.ZipFile(output_path, 'w') as zipf:
@@ -337,7 +339,7 @@ def process_document(input_file, assembly_id, assembly_name, figure_start, figur
             return {'success': False, 'message': 'No tasks could be extracted from the document'}
         
         # Save tasks to Excel
-        excel_path = os.path.join(temp_dir, f"Tasks_{assembly_name}.xlsx")
+        excel_path = os.path.join(temp_dir, f"{assembly_name}.xlsx")
         save_tasks_to_excel(tasks_df, assembly_name, excel_path)
         
         # Save images
@@ -345,8 +347,8 @@ def process_document(input_file, assembly_id, assembly_name, figure_start, figur
         save_images(images, images_dir)
         
         # Create ZIP package
-        zip_path = os.path.join(os.path.dirname(input_file), f"{assembly_name}_Package.zip")
-        create_zip_package(excel_path, images_dir, zip_path)
+        zip_path = os.path.join(os.path.dirname(input_file), f"{assembly_name}_extracted_data.zip")
+        create_zip_package(excel_path, images_dir, zip_path, assembly_name)
         
         # Return results
         return {

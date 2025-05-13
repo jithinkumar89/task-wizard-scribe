@@ -44,7 +44,7 @@ const isHeaderRow = (line: string): boolean => {
   for (const term of headerTerms) {
     if (lowerLine.includes(term)) {
       headerTermsFound++;
-      if (headerTermsFound >= 2) {
+      if (headerTermsFound >= 1) { // Changed from 2 to 1 to be more aggressive in header detection
         return true;
       }
     }
@@ -82,16 +82,18 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
       throw new Error("The document appears to be empty. Please check the file content.");
     }
     
-    // The first line might be a title or a header, check if it's likely a header
-    let docTitle = lines[0].trim();
-    let startLineIndex = 1;
+    // Check if the first line is likely a header
+    let docTitle = '';
+    let startLineIndex = 0;
     
-    // If the first line looks like a header row (contains terms like 'Sl No' and 'Job Details')
-    if (isHeaderRow(docTitle)) {
-      console.log("First line appears to be a header row, using it as document title but skipping as task");
-      // Use the next non-header line as title if available
-      if (lines.length > 1 && !isHeaderRow(lines[1])) {
-        startLineIndex = 2;
+    if (lines.length > 0) {
+      if (isHeaderRow(lines[0])) {
+        console.log("First line appears to be a header row, skipping as task");
+        docTitle = lines[0].trim();
+        startLineIndex = 1;
+      } else {
+        docTitle = lines[0].trim();
+        startLineIndex = 1;
       }
     }
     
@@ -572,7 +574,7 @@ export const createDownloadPackage = async (
   const zip = new JSZip();
   
   // Add the generated Excel file
-  zip.file(`${docTitle} - Task Master.xlsx`, excelBlob);
+  zip.file(`${docTitle}.xlsx`, excelBlob);
   
   // Create images folder
   const imagesFolder = zip.folder("images");

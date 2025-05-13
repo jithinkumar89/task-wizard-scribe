@@ -144,7 +144,7 @@ const Index = () => {
           const zipBlob = await createDownloadPackage(
             excelBlob,
             extractedContent.images || [],
-            extractedContent.docTitle || assemblyName || 'Unnamed Document'
+            assemblyName || extractedContent.docTitle || 'Unnamed Document'
           );
           setDownloadPackage(zipBlob);
         } catch (error) {
@@ -178,7 +178,7 @@ const Index = () => {
   // Handle package download
   const handleDownload = () => {
     if (downloadPackage) {
-      saveAs(downloadPackage, `${docTitle || assemblyName || 'Task_Master'} - SOP Package.zip`);
+      saveAs(downloadPackage, `${assemblyName || docTitle || 'Task_Master'}_extracted_data.zip`);
       toast({
         title: "Download started",
         description: "Your SOP package is being downloaded"
@@ -189,7 +189,7 @@ const Index = () => {
   // Handle Excel-only download
   const handleExcelDownload = () => {
     if (excelFile) {
-      saveAs(excelFile, `${docTitle || assemblyName || 'Task_Master'} - Tasks.xlsx`);
+      saveAs(excelFile, `${assemblyName || docTitle || 'Task_Master'}.xlsx`);
       toast({
         title: "Excel download started",
         description: "Your task Excel file is being downloaded"
@@ -201,7 +201,7 @@ const Index = () => {
   const handleImagesDownload = () => {
     if (downloadPackage) {
       // The createDownloadPackage already creates a zip with images folder
-      saveAs(downloadPackage, `${docTitle || assemblyName || 'Task_Master'} - Images.zip`);
+      saveAs(downloadPackage, `${assemblyName || docTitle || 'Task_Master'}_images.zip`);
       toast({
         title: "Images download started",
         description: "Your images package is being downloaded"
@@ -210,57 +210,63 @@ const Index = () => {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50">
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-50">
       {/* Header */}
-      <header className="bg-sop-blue text-white py-4">
+      <header className="bg-gradient-to-r from-blue-600 to-indigo-700 text-white py-6 shadow-lg">
         <div className="container mx-auto px-4">
           <div className="flex justify-between items-center">
             <div className="flex items-center space-x-2">
-              <FileText size={24} />
-              <h1 className="text-xl font-bold">SOP Task Master Generator</h1>
+              <FileText size={30} className="text-white/90" />
+              <h1 className="text-2xl font-bold">SOP Task Master Generator</h1>
             </div>
-            <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Medical Technologies Logo" className="h-8" />
+            <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Medical Technologies Logo" className="h-10" />
           </div>
         </div>
       </header>
       
       {/* Main content */}
-      <main className="container mx-auto px-4 py-8">
+      <main className="container mx-auto px-4 py-10">
         <div className="max-w-4xl mx-auto">
-          <Card className="mb-8 overflow-hidden">
-            <div className="bg-sop-gray p-4 border-b">
-              <h2 className="text-lg font-medium flex items-center">
-                <HelpCircle size={18} className="mr-2 text-sop-blue" />
+          <Card className="mb-8 overflow-hidden shadow-lg border-0 bg-white/80 backdrop-blur-sm">
+            <div className="bg-gradient-to-r from-indigo-100 to-blue-100 p-4 border-b">
+              <h2 className="text-lg font-medium flex items-center text-gray-800">
+                <HelpCircle size={20} className="mr-2 text-blue-600" />
                 How it works
               </h2>
             </div>
-            <CardContent className="p-4 space-y-2 text-sm">
-              <p>
-                1. Enter the Assembly Sequence ID (e.g., 1, 2, 3...) and Assembly Name.
+            <CardContent className="p-6 space-y-3 text-sm">
+              <p className="flex items-center">
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">1</span>
+                Enter the Assembly Sequence ID (e.g., 1, 2, 3...) and Assembly Name.
               </p>
-              <p>
-                2. If your document contains figure references, enter the figure range (e.g., 1-10).
+              <p className="flex items-center">
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">2</span>
+                If your document contains figure references, enter the figure range (e.g., 1-10).
               </p>
-              <p>
-                3. Upload your SOP Word document (.docx) containing a table with tasks.
+              <p className="flex items-center">
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">3</span>
+                Upload your SOP Word document (.docx) containing a table with tasks.
               </p>
-              <p>
-                4. The application will extract each task and assign task numbers in the format "{assemblySequenceId}.0.001".
+              <p className="flex items-center">
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">4</span>
+                The application will extract each task and assign task numbers in the format "{assemblySequenceId}.0.001".
               </p>
-              <p>
-                5. Images will be extracted and renamed according to the figure references in the document.
+              <p className="flex items-center">
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">5</span>
+                Images will be extracted and renamed according to the figure references in the document.
               </p>
-              <p>
-                6. Download the complete package, Excel file or just the images separately.
+              <p className="flex items-center">
+                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-indigo-600 text-white flex items-center justify-center mr-2 text-xs font-bold">6</span>
+                Download the complete package, Excel file or just the images separately.
               </p>
             </CardContent>
           </Card>
           
           {/* Input form */}
           {status === 'idle' && (
-            <div className="mb-6 bg-white p-4 rounded-lg shadow-sm border space-y-4">
+            <div className="mb-6 bg-white/80 backdrop-blur-sm p-6 rounded-lg shadow-md border border-blue-100 space-y-5">
               <div>
-                <Label htmlFor="sequenceId" className="text-sm font-medium">
+                <Label htmlFor="sequenceId" className="text-sm font-medium text-gray-700">
                   Assembly Sequence ID
                 </Label>
                 <div className="flex mt-2 gap-2 items-center">
@@ -270,7 +276,7 @@ const Index = () => {
                     min="1"
                     value={assemblySequenceId}
                     onChange={(e) => setAssemblySequenceId(e.target.value)}
-                    className="w-32"
+                    className="w-32 border-blue-200 focus:border-blue-400"
                     placeholder="e.g., 1"
                   />
                   <p className="text-sm text-gray-500">
@@ -280,7 +286,7 @@ const Index = () => {
               </div>
               
               <div>
-                <Label htmlFor="assemblyName" className="text-sm font-medium">
+                <Label htmlFor="assemblyName" className="text-sm font-medium text-gray-700">
                   Assembly Name
                 </Label>
                 <div className="flex mt-2 gap-2 items-center">
@@ -289,17 +295,17 @@ const Index = () => {
                     type="text"
                     value={assemblyName}
                     onChange={(e) => setAssemblyName(e.target.value)}
-                    className="w-full"
+                    className="w-full border-blue-200 focus:border-blue-400"
                     placeholder="e.g., Engine Assembly"
                   />
                 </div>
                 <p className="text-sm text-gray-500 mt-1">
-                  This will be used as the description for all tasks
+                  This will be used as the description for all tasks and for output files naming
                 </p>
               </div>
               
               <div>
-                <Label className="text-sm font-medium">
+                <Label className="text-sm font-medium text-gray-700">
                   Figure Reference Range
                 </Label>
                 <div className="flex mt-2 gap-2 items-center">
@@ -309,7 +315,7 @@ const Index = () => {
                     min="1"
                     value={figureStartRange}
                     onChange={(e) => setFigureStartRange(e.target.value)}
-                    className="w-24"
+                    className="w-24 border-blue-200 focus:border-blue-400"
                     placeholder="Start"
                   />
                   <span>to</span>
@@ -319,7 +325,7 @@ const Index = () => {
                     min="1"
                     value={figureEndRange}
                     onChange={(e) => setFigureEndRange(e.target.value)}
-                    className="w-24"
+                    className="w-24 border-blue-200 focus:border-blue-400"
                     placeholder="End"
                   />
                   <p className="text-sm text-gray-500">
@@ -349,55 +355,51 @@ const Index = () => {
           {/* Results section */}
           {tasks.length > 0 && (
             <div className="space-y-6">
-              <h2 className="text-xl font-semibold text-gray-800">
+              <h2 className="text-xl font-semibold text-gray-800 flex items-center">
+                <span className="w-2 h-8 bg-gradient-to-b from-blue-600 to-indigo-600 rounded mr-2"></span>
                 Extracted Tasks Preview
               </h2>
               
-              <TaskPreview tasks={tasks} documentTitle={docTitle || assemblyName} />
+              <TaskPreview tasks={tasks} documentTitle={assemblyName || docTitle} />
               
               {/* Download buttons */}
-              {status === 'complete' && (
-                <div className="flex flex-wrap justify-center mt-6 gap-4">
-                  {downloadPackage && (
-                    <Button 
-                      onClick={handleDownload}
-                      className="bg-sop-blue hover:bg-sop-lightBlue px-6 py-2"
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      Download Complete Package
-                    </Button>
-                  )}
+              {status === 'complete' && downloadPackage && (
+                <div className="flex flex-wrap justify-center mt-8 gap-4">
+                  <Button 
+                    onClick={handleDownload}
+                    className="bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 px-6 py-5 shadow-lg transition-all duration-300 hover:shadow-xl"
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Download Complete Package
+                  </Button>
                   
-                  {excelFile && (
-                    <Button 
-                      onClick={handleExcelDownload}
-                      variant="outline"
-                      className="px-6 py-2"
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      Download Excel File
-                    </Button>
-                  )}
+                  <Button 
+                    onClick={handleExcelDownload}
+                    variant="outline"
+                    className="px-6 py-5 border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors duration-300"
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Download Excel File
+                  </Button>
                   
-                  {downloadPackage && (
-                    <Button 
-                      onClick={handleImagesDownload}
-                      variant="outline"
-                      className="px-6 py-2"
-                    >
-                      <Download className="mr-2 h-4 w-4" />
-                      Download Images Only
-                    </Button>
-                  )}
+                  <Button 
+                    onClick={handleImagesDownload}
+                    variant="outline"
+                    className="px-6 py-5 border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors duration-300"
+                  >
+                    <Download className="mr-2 h-4 w-4" />
+                    Download Images Only
+                  </Button>
                 </div>
               )}
               
               {/* Upload another file button */}
               {status === 'complete' && (
-                <div className="flex justify-center mt-4">
+                <div className="flex justify-center mt-6">
                   <Button 
                     variant="outline"
                     onClick={() => setStatus('idle')}
+                    className="border-blue-300 text-blue-700 hover:bg-blue-50 transition-colors duration-300"
                   >
                     Process Another Document
                   </Button>
@@ -409,7 +411,7 @@ const Index = () => {
       </main>
       
       {/* Footer */}
-      <footer className="bg-gray-100 py-4 mt-12">
+      <footer className="bg-gradient-to-r from-gray-100 to-blue-100 py-6 mt-12">
         <div className="container mx-auto px-4 text-center text-sm text-gray-600 flex justify-center items-center space-x-2">
           <span>SOP Task Master Generator - BPL Medical Technologies</span>
           <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Logo" className="h-5" />

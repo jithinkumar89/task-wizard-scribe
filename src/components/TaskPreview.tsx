@@ -31,7 +31,7 @@ const TaskPreview = ({ tasks, documentTitle }: TaskPreviewProps) => {
 
   return (
     <Card className="w-full">
-      <CardHeader className="bg-sop-blue text-white">
+      <CardHeader className="bg-gradient-to-r from-sky-500 to-indigo-600 text-white">
         <CardTitle>{documentTitle || 'Task Master Preview'}</CardTitle>
       </CardHeader>
       <CardContent className="p-0 overflow-auto max-h-[500px]">
