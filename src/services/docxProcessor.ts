@@ -25,18 +25,22 @@ const stepNumberPatterns = [
   /^[a-zA-Z]?\s*(\d+)[\.\)]\s+/, // Format with optional letter prefix: a 1), A. 2, etc.
   /^Task\s+(\d+)\.?\s+/i, // Format with "Task" prefix: Task 1., Task 2., etc.
   /^Sl\.\s*No\.\s*(\d+)/i, // Format with "Sl. No." prefix: Sl. No. 1, etc.
-  /^(\d+)\s*[\.\)]\s+/ // Simple number with dot or parenthesis: "1) ", "2. "
+  /^(\d+)\s*[\.\)]\s+/, // Simple number with dot or parenthesis: "1) ", "2. "
+  /^[Ss][Ll]\s*\.?\s*[Nn][Oo]\s*\.?\s*(\d+)\s*[\.:]?\s*/, // SL NO 1: or SL. NO. 1.
+  /^[Pp]rocedure\s+(\d+)/ // Format with "Procedure" prefix: Procedure 1, etc.
+];
+
+// Additional header terms to detect table headers more accurately
+const headerTerms = [
+  'sl no', 'sl.no', 'sl. no', 'serial no', 'serial number',
+  'step no', 'task no', 'job details', 'description', 'activity',
+  'operation', 'procedure', 'instruction', 'steps', 'sl-no', 
+  'task description', 'work instruction', 'action', '#', 'no.',
+  'tasks', 'item', 'procedures'
 ];
 
 // Check if a line is likely a header row
 const isHeaderRow = (line: string): boolean => {
-  // Check for common header terms
-  const headerTerms = [
-    'sl no', 'sl.no', 'sl. no', 'serial no', 'serial number',
-    'step no', 'task no', 'job details', 'description', 'activity',
-    'operation', 'procedure', 'instruction'
-  ];
-  
   const lowerLine = line.toLowerCase();
   
   // If multiple header terms are found, it's likely a header
@@ -44,7 +48,7 @@ const isHeaderRow = (line: string): boolean => {
   for (const term of headerTerms) {
     if (lowerLine.includes(term)) {
       headerTermsFound++;
-      if (headerTermsFound >= 1) { // Changed from 2 to 1 to be more aggressive in header detection
+      if (headerTermsFound >= 1) {
         return true;
       }
     }
@@ -53,23 +57,29 @@ const isHeaderRow = (line: string): boolean => {
   // Check for tab-separated or multiple-space-separated format that might indicate a table header
   const hasTabSeparation = /\t/.test(line);
   const hasMultipleSpaceSeparation = /\s{3,}/.test(line);
+  const hasNumberLabels = /^\s*([0-9]+|[#])\s*\./.test(line) && /description|details|procedure|step/i.test(line);
   
   // If it has separation format and contains at least one header term
-  return (hasTabSeparation || hasMultipleSpaceSeparation) && headerTermsFound > 0;
+  return ((hasTabSeparation || hasMultipleSpaceSeparation) && headerTermsFound > 0) || hasNumberLabels;
 };
 
-// Process the uploaded Word document
+// Process the uploaded Word document with improved handling for larger files
 export const processDocument = async (file: File, assemblySequenceId: string = '1'): Promise<ExtractedContent> => {
   try {
     console.log("Processing document started with assembly sequence ID:", assemblySequenceId);
-    // Extract HTML content from the docx file
+    
+    // Extract HTML content from the docx file for text parsing
     const result = await mammoth.extractRawText({ 
       arrayBuffer: await file.arrayBuffer() 
     });
     
-    // Also extract images for separate processing
+    // Also extract images using HTML conversion
     const imageResult = await mammoth.convertToHtml({
-      arrayBuffer: await file.arrayBuffer()
+      arrayBuffer: await file.arrayBuffer(),
+      // Set a high transformation limit to handle large documents
+      transformDocument: mammoth.transforms.paragraph(paragraph => {
+        return paragraph;
+      })
     });
 
     console.log("Document text extracted successfully");
@@ -82,16 +92,22 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
       throw new Error("The document appears to be empty. Please check the file content.");
     }
     
-    // Check if the first line is likely a header
+    // Check if the first line is likely a document title or header
     let docTitle = '';
     let startLineIndex = 0;
     
     if (lines.length > 0) {
-      if (isHeaderRow(lines[0])) {
-        console.log("First line appears to be a header row, skipping as task");
-        docTitle = lines[0].trim();
-        startLineIndex = 1;
-      } else {
+      // Try to find a good document title from the first few lines
+      for (let i = 0; i < Math.min(5, lines.length); i++) {
+        if (!isHeaderRow(lines[i]) && lines[i].length > 5 && lines[i].length < 100) {
+          docTitle = lines[i].trim();
+          startLineIndex = i + 1;
+          break;
+        }
+      }
+      
+      // If we didn't find a good title, use the first line
+      if (docTitle === '') {
         docTitle = lines[0].trim();
         startLineIndex = 1;
       }
@@ -106,24 +122,44 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
     // Try to detect if the document has a table structure
     const hasTableStructure = detectTableStructure(result.value);
     
-    // Extract tasks based on document structure
+    // Extract tasks based on document structure using multiple methods for better coverage
     let tasks: Task[] = [];
+    let methodsToTry = [
+      { name: "table", fn: () => extractTasksFromTable(result.value, docTitle, images, assemblySequenceId) },
+      { name: "paragraph", fn: () => extractTasks(lines.slice(startLineIndex), docTitle, images, assemblySequenceId) },
+      { name: "aggressive", fn: () => extractTasksAggressively(result.value, docTitle, images, assemblySequenceId) }
+    ];
+    
+    // If we detected a table structure, prioritize table extraction
     if (hasTableStructure) {
-      console.log("Detected table structure, extracting tasks from table...");
-      tasks = extractTasksFromTable(result.value, docTitle, images, assemblySequenceId);
+      console.log("Detected table structure, prioritizing table-based extraction...");
+      methodsToTry = [
+        methodsToTry[0],  // table method
+        methodsToTry[1],  // paragraph method
+        methodsToTry[2]   // aggressive method
+      ];
     } else {
-      console.log("Using paragraph-based task extraction...");
-      tasks = extractTasks(lines.slice(startLineIndex), docTitle, images, assemblySequenceId);
+      console.log("No table structure detected, prioritizing paragraph-based extraction...");
+      methodsToTry = [
+        methodsToTry[1],  // paragraph method
+        methodsToTry[0],  // table method
+        methodsToTry[2]   // aggressive method
+      ];
+    }
+    
+    // Try each extraction method until we get tasks
+    for (const method of methodsToTry) {
+      console.log(`Trying ${method.name}-based task extraction...`);
+      tasks = method.fn();
+      
+      // If we found a good number of tasks, stop trying other methods
+      if (tasks.length > 0) {
+        console.log(`${method.name} extraction successful, found ${tasks.length} tasks`);
+        break;
+      }
     }
     
     console.log(`Extracted ${tasks.length} tasks from document`);
-    
-    // If no tasks were found, try a more aggressive approach
-    if (tasks.length === 0) {
-      console.log("No tasks found with primary method, trying alternative extraction...");
-      tasks = extractTasksAggressively(result.value, docTitle, images, assemblySequenceId);
-      console.log(`Alternative extraction found ${tasks.length} tasks`);
-    }
     
     // Map images to tasks based on figure references
     tasks = mapImagesToTasks(tasks, images, result.value);
@@ -139,7 +175,7 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
   }
 };
 
-// Map images to tasks based on figure references in the text
+// Map images to tasks based on figure references in the text with improved pattern matching
 const mapImagesToTasks = (
   tasks: Task[], 
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
@@ -148,14 +184,25 @@ const mapImagesToTasks = (
   // Create a mapping of tasks to image references
   const taskImageMapping: Record<string, string[]> = {};
   
-  // Extract figure references from document text
-  const figurePattern = /figure\s+(\d+)/gi;
-  let figureMatch;
+  // Extract figure references from document text with multiple patterns
+  const figurePatterns = [
+    /figure\s+(\d+)/gi,
+    /fig\.?\s+(\d+)/gi,
+    /photo\s+(\d+)/gi,
+    /picture\s+(\d+)/gi,
+    /image\s+(\d+)/gi,
+    /illustration\s+(\d+)/gi
+  ];
+  
   const figureReferences: number[] = [];
   
-  while ((figureMatch = figurePattern.exec(documentText)) !== null) {
-    figureReferences.push(parseInt(figureMatch[1], 10));
-  }
+  // Find all figure references in the document using multiple patterns
+  figurePatterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(documentText)) !== null) {
+      figureReferences.push(parseInt(match[1], 10));
+    }
+  });
   
   // Map each task to the images it references
   tasks.forEach(task => {
@@ -163,21 +210,47 @@ const mapImagesToTasks = (
     const taskContent = task.activity;
     const taskFigures: string[] = [];
     
-    // Look for figure references in this task
-    const taskFigurePattern = /figure\s+(\d+)/gi;
-    let taskFigureMatch;
-    
-    while ((taskFigureMatch = taskFigurePattern.exec(taskContent)) !== null) {
-      const figureNum = parseInt(taskFigureMatch[1], 10);
-      const imageId = formatImageId(figureNum, task.task_no?.split('.')[0] || '1');
-      taskFigures.push(imageId);
-    }
+    // Look for figure references in this task using multiple patterns
+    figurePatterns.forEach(pattern => {
+      // Reset the lastIndex property to start searching from the beginning
+      pattern.lastIndex = 0;
+      let match;
+      while ((match = pattern.exec(taskContent)) !== null) {
+        const figureNum = parseInt(match[1], 10);
+        const imageId = formatImageId(figureNum, task.task_no?.split('.')[0] || '1');
+        if (!taskFigures.includes(imageId)) {
+          taskFigures.push(imageId);
+        }
+      }
+    });
     
     // Store the mapping
     if (taskFigures.length > 0) {
       taskImageMapping[task.task_no || ''] = taskFigures;
     }
   });
+  
+  // If no specific figure references were found in tasks, distribute images evenly
+  if (Object.keys(taskImageMapping).length === 0 && tasks.length > 0 && images.length > 0) {
+    console.log("No specific figure references found, distributing images evenly among tasks");
+    
+    // Calculate roughly how many images per task
+    const imagesPerTask = Math.ceil(images.length / tasks.length);
+    
+    tasks.forEach((task, index) => {
+      const start = index * imagesPerTask;
+      const end = Math.min(start + imagesPerTask, images.length);
+      
+      if (start < images.length) {
+        const taskImages: string[] = [];
+        for (let i = start; i < end; i++) {
+          taskImages.push(images[i].task_no);
+        }
+        
+        taskImageMapping[task.task_no || ''] = taskImages;
+      }
+    });
+  }
   
   // Update tasks with their image references
   return tasks.map(task => {
@@ -197,16 +270,28 @@ const formatImageId = (figureNumber: number, assemblyId: string): string => {
 
 // Detect if the document likely has a table structure
 const detectTableStructure = (content: string): boolean => {
-  // Simple heuristic: check for repeated tab or multiple space patterns
+  // More sophisticated heuristic to detect tables
   const tableIndicators = [
     /\t[^\t]+\t[^\t]+/g,  // Tab separated content
-    /\s{2,}[^\s]+\s{2,}[^\s]+/g  // Space separated (2+ spaces)
+    /\s{2,}[^\s]+\s{2,}[^\s]+/g,  // Space separated (2+ spaces)
+    /^\d+\.\s+[^\n]+\n\d+\.\s+/m  // Numbered list format (1. xxx\n2. xxx)
   ];
   
-  return tableIndicators.some(pattern => pattern.test(content));
+  // Count the number of lines that match table patterns
+  let tableLineCount = 0;
+  const lines = content.split('\n');
+  
+  for (const line of lines) {
+    if (tableIndicators.some(pattern => pattern.test(line))) {
+      tableLineCount++;
+    }
+  }
+  
+  // If more than 20% of lines look like table rows, consider it a table structure
+  return tableLineCount > lines.length * 0.2;
 };
 
-// Extract tasks from text content
+// Extract tasks from text content with improved patterns
 const extractTasks = (
   lines: string[], 
   docTitle: string, 
@@ -214,8 +299,9 @@ const extractTasks = (
   assemblySequenceId: string = '1'
 ): Task[] => {
   const tasks: Task[] = [];
-  let currentTaskIndex = 0;
+  let currentTaskNum: number | null = null;
   let currentTask = '';
+  let lastFoundTaskNum = 0;
   
   for (const line of lines) {
     const trimmedLine = line.trim();
@@ -225,16 +311,20 @@ const extractTasks = (
     
     // Check if line starts with any of the step number patterns
     let stepMatch = null;
+    let matchedPattern = null;
+    
     for (const pattern of stepNumberPatterns) {
       stepMatch = trimmedLine.match(pattern);
-      if (stepMatch) break;
+      if (stepMatch) {
+        matchedPattern = pattern;
+        break;
+      }
     }
     
     if (stepMatch) {
       // If we were processing a previous task, save it
-      if (currentTask) {
-        currentTaskIndex++;
-        const formatted = formatTaskNumber(currentTaskIndex.toString(), assemblySequenceId);
+      if (currentTask && currentTaskNum !== null) {
+        const formatted = formatTaskNumber(currentTaskNum.toString(), assemblySequenceId);
         
         tasks.push({
           task_no: formatted, 
@@ -246,10 +336,33 @@ const extractTasks = (
           attachment: '',
           hasImage: false
         });
+        lastFoundTaskNum = currentTaskNum;
       }
       
-      // Start a new task
-      currentTask = trimmedLine.substring(stepMatch[0].length).trim();
+      // Start a new task with the extracted task number
+      currentTaskNum = parseInt(stepMatch[1], 10);
+      
+      // Extract content after the task number
+      const taskContent = trimmedLine.substring(stepMatch[0].length).trim();
+      currentTask = taskContent;
+      
+      // If there was a gap in task numbers, fill it with empty tasks to maintain sequence
+      if (lastFoundTaskNum > 0 && currentTaskNum > lastFoundTaskNum + 1) {
+        // Fill the gap with placeholder tasks
+        for (let i = lastFoundTaskNum + 1; i < currentTaskNum; i++) {
+          const formatted = formatTaskNumber(i.toString(), assemblySequenceId);
+          tasks.push({
+            task_no: formatted,
+            type: 'Operation',
+            eta_sec: '',
+            description: '[Missing Task]',
+            activity: '[This task was not found in the document]',
+            specification: '',
+            attachment: '',
+            hasImage: false
+          });
+        }
+      }
     } else {
       // Append to current task description
       if (currentTask) {
@@ -259,9 +372,8 @@ const extractTasks = (
   }
   
   // Add the last task if there is one
-  if (currentTask) {
-    currentTaskIndex++;
-    const formatted = formatTaskNumber(currentTaskIndex.toString(), assemblySequenceId);
+  if (currentTask && currentTaskNum !== null) {
+    const formatted = formatTaskNumber(currentTaskNum.toString(), assemblySequenceId);
     
     tasks.push({
       task_no: formatted,
@@ -278,7 +390,7 @@ const extractTasks = (
   return tasks;
 };
 
-// More aggressive task extraction method as a fallback
+// More aggressive task extraction method as a fallback for complex document formats
 const extractTasksAggressively = (
   content: string,
   docTitle: string,
@@ -291,40 +403,89 @@ const extractTasksAggressively = (
   const paragraphs = content.split(/\n\n|\r\n\r\n/).filter(p => p.trim().length > 0);
   let taskIndex = 1;
   
+  // First pass: look for paragraphs that appear to be tasks
   for (const paragraph of paragraphs) {
     // Skip very short paragraphs, likely headers, or header-like content
     if (paragraph.trim().length < 10 || 
         paragraph.trim() === docTitle || 
         isHeaderRow(paragraph.trim())) continue;
     
-    // Attempt to find a number at the start of the paragraph
-    const numberMatch = paragraph.match(/^\s*(\d+)/);
+    // Check for number patterns at the beginning of paragraphs
+    let taskNum: number | null = null;
+    let restOfText = paragraph.trim();
     
-    // If we found a number, use it as the task index, otherwise use incremental index
-    if (numberMatch) {
-      taskIndex = parseInt(numberMatch[1], 10);
+    for (const pattern of stepNumberPatterns) {
+      const match = paragraph.match(pattern);
+      if (match) {
+        taskNum = parseInt(match[1], 10);
+        restOfText = paragraph.substring(match[0].length).trim();
+        break;
+      }
     }
     
-    const formatted = formatTaskNumber(taskIndex.toString(), assemblySequenceId);
+    // If no explicit task number found, try to detect if it could be a task
+    if (taskNum === null) {
+      // Check for indicators that this might be a task instruction
+      const mightBeTask = /^[A-Z][^\.]+\./.test(paragraph) || // Starts with capital letter and has a period
+                           /^(Check|Ensure|Remove|Install|Attach|Connect|Verify|Place|Position)/.test(paragraph); // Starts with action verb
+      
+      if (mightBeTask && paragraph.length > 20) {
+        taskNum = taskIndex++;
+        restOfText = paragraph.trim();
+      }
+    } else {
+      // If we found a task number, update our taskIndex to be at least this number
+      taskIndex = Math.max(taskIndex, taskNum + 1);
+    }
     
-    tasks.push({
-      task_no: formatted,
-      type: 'Operation',
-      eta_sec: '',
-      description: paragraph.trim(),
-      activity: paragraph.trim(),
-      specification: '',
-      attachment: '',
-      hasImage: false
-    });
+    // Add the task if we determined this paragraph is a task
+    if (taskNum !== null) {
+      const formatted = formatTaskNumber(taskNum.toString(), assemblySequenceId);
+      
+      tasks.push({
+        task_no: formatted,
+        type: 'Operation',
+        eta_sec: '',
+        description: restOfText,
+        activity: restOfText,
+        specification: '',
+        attachment: '',
+        hasImage: false
+      });
+    }
+  }
+  
+  // If we still don't have tasks, make a more desperate attempt by treating each paragraph as a task
+  if (tasks.length === 0) {
+    console.log("No tasks found in first aggressive pass, treating paragraphs as sequential tasks");
+    let index = 1;
     
-    taskIndex++;
+    for (const paragraph of paragraphs) {
+      // Skip very short paragraphs, duplicates of document title or obvious headers
+      if (paragraph.trim().length < 15 || 
+          paragraph.trim() === docTitle || 
+          isHeaderRow(paragraph.trim())) continue;
+      
+      const formatted = formatTaskNumber(index.toString(), assemblySequenceId);
+      tasks.push({
+        task_no: formatted,
+        type: 'Operation',
+        eta_sec: '',
+        description: paragraph.trim().split('\n')[0], // Use first line as description
+        activity: paragraph.trim(),
+        specification: '',
+        attachment: '',
+        hasImage: false
+      });
+      
+      index++;
+    }
   }
   
   return tasks;
 };
 
-// Extract tasks from table-structured content
+// Extract tasks from table-structured content with improved parsing
 const extractTasksFromTable = (
   content: string,
   docTitle: string,
@@ -333,44 +494,84 @@ const extractTasksFromTable = (
 ): Task[] => {
   const tasks: Task[] = [];
   const lines = content.split('\n').filter(line => line.trim().length > 0);
-  let taskIndex = 1;
-  let skipFirstRow = false;
+  let taskNum = 1;
+  let skipLines = 0;
   
-  // Check if first line is a header
-  if (lines.length > 0 && isHeaderRow(lines[0])) {
-    skipFirstRow = true;
-    console.log("Skipping first row as it appears to be a header:", lines[0]);
+  // First pass to identify header row(s)
+  const headerLines: number[] = [];
+  for (let i = 0; i < Math.min(10, lines.length); i++) {
+    if (isHeaderRow(lines[i])) {
+      headerLines.push(i);
+      console.log(`Identified header at line ${i}: ${lines[i]}`);
+    }
   }
   
-  // Start from second row if first is a header
-  const startIndex = skipFirstRow ? 1 : 0;
+  // Skip header lines if any found
+  skipLines = headerLines.length > 0 ? Math.max(...headerLines) + 1 : 0;
   
-  for (let i = startIndex; i < lines.length; i++) {
+  // Process content lines (non-header)
+  for (let i = skipLines; i < lines.length; i++) {
     const line = lines[i].trim();
     
-    // Skip if this line looks like a header row
+    // Skip if this line also looks like a header
     if (isHeaderRow(line)) continue;
     
-    // Look for a number at the beginning of the line
-    const match = line.match(/^\s*(\d+)/);
-    if (match) {
-      const stepNumber = parseInt(match[1], 10);
-      taskIndex = stepNumber; // Use the found step number as the task index
-      
-      const restOfLine = line.substring(match[0].length).trim();
-      
-      const formatted = formatTaskNumber(taskIndex.toString(), assemblySequenceId);
+    // Try to find task number using various patterns
+    let taskNumber: number | null = null;
+    let activityContent = line;
+    
+    for (const pattern of stepNumberPatterns) {
+      const match = line.match(pattern);
+      if (match) {
+        taskNumber = parseInt(match[1], 10);
+        activityContent = line.substring(match[0].length).trim();
+        break;
+      }
+    }
+    
+    // If no task number found, look for tab-separated or space-separated content
+    if (taskNumber === null) {
+      // Try to extract task number from tab or space separated content
+      if (/\t/.test(line)) {
+        // Tab-separated
+        const parts = line.split('\t').filter(part => part.trim() !== '');
+        if (parts.length >= 2) {
+          const numMatch = parts[0].match(/\d+/);
+          if (numMatch) {
+            taskNumber = parseInt(numMatch[0], 10);
+            activityContent = parts.slice(1).join(' ').trim();
+          }
+        }
+      } else if (/\s{3,}/.test(line)) {
+        // Space-separated (3+ spaces likely indicates columns)
+        const parts = line.split(/\s{3,}/);
+        if (parts.length >= 2) {
+          const numMatch = parts[0].match(/\d+/);
+          if (numMatch) {
+            taskNumber = parseInt(numMatch[0], 10);
+            activityContent = parts.slice(1).join(' ').trim();
+          }
+        }
+      }
+    }
+    
+    // If we found a task number, add the task
+    if (taskNumber !== null) {
+      const formatted = formatTaskNumber(taskNumber.toString(), assemblySequenceId);
       
       tasks.push({
         task_no: formatted,
         type: 'Operation',
         eta_sec: '',
-        description: restOfLine,
-        activity: restOfLine,
+        description: activityContent,
+        activity: activityContent,
         specification: '',
         attachment: '',
         hasImage: false
       });
+      
+      // Update task number for next task if needed
+      taskNum = Math.max(taskNum, taskNumber + 1);
     }
   }
   
@@ -386,7 +587,7 @@ const formatTaskNumber = (stepNumber: string, assemblySequenceId: string = '1'):
   return `${assemblySequenceId}.0.${formattedStepNumber}`;
 };
 
-// Extract images from the document
+// Extract images from the document with improved handling for large documents
 const extractImages = async (
   file: File, 
   htmlContent: string, 
@@ -419,7 +620,6 @@ const extractImages = async (
     }
     
     // Look for images in the ZIP structure directly
-    const images: Array<{ task_no: string; imageData: Blob; contentType: string }> = [];
     const imageFiles: { [key: string]: { data: Blob, contentType: string } } = {};
     
     // First collect all images from word/media
@@ -441,30 +641,40 @@ const extractImages = async (
     
     console.log(`Found ${Object.keys(imageFiles).length} image files in the document`);
     
-    // Extract figure references from HTML content
-    const figurePattern = /Figure\s+(\d+)/gi;
-    let figureMatch;
-    const figureNumbers: number[] = [];
+    // Extract figure references from HTML content with multiple patterns
+    const figurePatterns = [
+      /[Ff]igure\s+(\d+)/g,
+      /[Ff]ig\.?\s+(\d+)/g,
+      /[Ii]llustration\s+(\d+)/g,
+      /[Pp]hoto\s+(\d+)/g,
+      /[Pp]icture\s+(\d+)/g,
+      /[Ii]mage\s+(\d+)/g
+    ];
+    
+    const figureNumbers: Set<number> = new Set();
     
     // Find all figure references in the document
-    while ((figureMatch = figurePattern.exec(htmlContent)) !== null) {
-      const figNum = parseInt(figureMatch[1], 10);
-      if (!figureNumbers.includes(figNum)) {
-        figureNumbers.push(figNum);
+    figurePatterns.forEach(pattern => {
+      let match;
+      while ((match = pattern.exec(htmlContent)) !== null) {
+        const figNum = parseInt(match[1], 10);
+        figureNumbers.add(figNum);
       }
-    }
+    });
     
     // Sort figure numbers
-    figureNumbers.sort((a, b) => a - b);
+    const sortedFigureNumbers = Array.from(figureNumbers).sort((a, b) => a - b);
     
-    // Map figure numbers to images
-    if (figureNumbers.length > 0 && Object.keys(imageFiles).length > 0) {
-      // For each figure reference, assign an image
-      const imageEntries = Object.entries(imageFiles);
-      figureNumbers.forEach((figNum, index) => {
+    // Map image files to images array with proper IDs
+    const images: Array<{ task_no: string; imageData: Blob; contentType: string }> = [];
+    const imageEntries = Object.entries(imageFiles);
+    
+    // If we have figure references, try to map them to images
+    if (sortedFigureNumbers.length > 0 && imageEntries.length > 0) {
+      // First handle explicit figure references
+      sortedFigureNumbers.forEach((figNum, index) => {
         if (index < imageEntries.length) {
-          const [imageName, imageInfo] = imageEntries[index];
-          // Use the figure number in the image ID
+          const [, imageInfo] = imageEntries[index];
           const imageId = `${assemblySequenceId}-0-${figNum.toString().padStart(3, '0')}`;
           images.push({
             task_no: imageId,
@@ -474,31 +684,31 @@ const extractImages = async (
         }
       });
       
-      // Handle any remaining images
-      if (imageEntries.length > figureNumbers.length) {
-        for (let i = figureNumbers.length; i < imageEntries.length; i++) {
-          const [imageName, imageInfo] = imageEntries[i];
-          const nextFigNum = (figureNumbers.length > 0 ? Math.max(...figureNumbers) : 0) + (i - figureNumbers.length + 1);
+      // Then handle any remaining images
+      if (imageEntries.length > sortedFigureNumbers.length) {
+        let nextFigNum = sortedFigureNumbers.length > 0 ? Math.max(...sortedFigureNumbers) + 1 : 1;
+        
+        for (let i = sortedFigureNumbers.length; i < imageEntries.length; i++) {
+          const [, imageInfo] = imageEntries[i];
           const imageId = `${assemblySequenceId}-0-${nextFigNum.toString().padStart(3, '0')}`;
           images.push({
             task_no: imageId,
             imageData: imageInfo.data,
             contentType: imageInfo.contentType
           });
+          nextFigNum++;
         }
       }
     } else {
-      // If no figure references, just assign sequential IDs
-      let imgIndex = 1;
-      for (const [imageName, imageInfo] of Object.entries(imageFiles)) {
-        const imageId = `${assemblySequenceId}-0-${imgIndex.toString().padStart(3, '0')}`;
+      // If no figure references, assign sequential numbers to all images
+      imageEntries.forEach(([, imageInfo], index) => {
+        const imageId = `${assemblySequenceId}-0-${(index + 1).toString().padStart(3, '0')}`;
         images.push({
           task_no: imageId,
           imageData: imageInfo.data,
           contentType: imageInfo.contentType
         });
-        imgIndex++;
-      }
+      });
     }
     
     return images;
