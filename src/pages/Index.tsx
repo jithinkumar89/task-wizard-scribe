@@ -12,6 +12,13 @@ import { toast } from '@/hooks/use-toast';
 import Footer from '@/components/Footer';
 import { saveAs } from 'file-saver';
 import { Task } from '@/components/TaskPreview';
+import { 
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const Index = () => {
   const [assemblySequenceId, setAssemblySequenceId] = useState('1');
@@ -181,12 +188,16 @@ const Index = () => {
               
               <div>
                 <Label htmlFor="type">Type</Label>
-                <Input
-                  id="type"
-                  placeholder="e.g., Operation, Approval, QC"
-                  value={type}
-                  onChange={(e) => setType(e.target.value)}
-                />
+                <Select value={type} onValueChange={setType}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="e.g., Operation, QC, Approval" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Operation">Operation</SelectItem>
+                    <SelectItem value="QC">QC</SelectItem>
+                    <SelectItem value="Approval">Approval</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
 
               <div className="grid grid-cols-2 gap-4">
