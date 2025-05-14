@@ -1,3 +1,4 @@
+
 import * as mammoth from 'mammoth';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from 'docx';
 import { saveAs } from 'file-saver';
@@ -14,6 +15,8 @@ interface ExtractedContent {
     imageData: Blob;
     contentType: string;
   }>;
+  toolsData?: Array<{ task_no: string; tools: string }>;
+  imtData?: Array<{ task_no: string; imt: string }>;
 }
 
 // Multiple regex patterns for parsing different formats of step numbers
@@ -28,6 +31,14 @@ const stepNumberPatterns = [
   /^[Ss][Ll]\s*\.?\s*[Nn][Oo]\s*\.?\s*(\d+)\s*[\.:]?\s*/, // SL NO 1: or SL. NO. 1.
   /^[Pp]rocedure\s+(\d+)/ // Format with "Procedure" prefix: Procedure 1, etc.
 ];
+
+// Special paragraph patterns that aren't tasks
+const specialParagraphPatterns = {
+  tools: /^Tools\s+used:?\s*/i,
+  imt: /^IMT\s+used:?\s*/i,
+  keyPoints: /^Key\s+points:?\s*/i,
+  note: /^Note:?\s*/i
+};
 
 // Additional header terms to detect table headers more accurately
 const headerTerms = [
@@ -63,7 +74,7 @@ const isHeaderRow = (line: string): boolean => {
 };
 
 // Process the uploaded Word document with improved handling for larger files
-export const processDocument = async (file: File, assemblySequenceId: string = '1'): Promise<ExtractedContent> => {
+export const processDocument = async (file: File, assemblySequenceId: string = '1', type: string = ''): Promise<ExtractedContent> => {
   try {
     console.log("Processing document started with assembly sequence ID:", assemblySequenceId);
     
@@ -75,7 +86,6 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
     // Also extract images using HTML conversion
     const imageResult = await mammoth.convertToHtml({
       arrayBuffer: await file.arrayBuffer(),
-      // Remove the transformDocument property as it's causing type errors
     });
 
     console.log("Document text extracted successfully");
@@ -120,10 +130,13 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
     
     // Extract tasks based on document structure using multiple methods for better coverage
     let tasks: Task[] = [];
+    let toolsData: Array<{ task_no: string; tools: string }> = [];
+    let imtData: Array<{ task_no: string; imt: string }> = [];
+    
     let methodsToTry = [
-      { name: "table", fn: () => extractTasksFromTable(result.value, docTitle, images, assemblySequenceId) },
-      { name: "paragraph", fn: () => extractTasks(lines.slice(startLineIndex), docTitle, images, assemblySequenceId) },
-      { name: "aggressive", fn: () => extractTasksAggressively(result.value, docTitle, images, assemblySequenceId) }
+      { name: "table", fn: () => extractTasksFromTable(result.value, docTitle, images, assemblySequenceId, toolsData, imtData) },
+      { name: "paragraph", fn: () => extractTasks(lines.slice(startLineIndex), docTitle, images, assemblySequenceId, toolsData, imtData) },
+      { name: "aggressive", fn: () => extractTasksAggressively(result.value, docTitle, images, assemblySequenceId, toolsData, imtData) }
     ];
     
     // If we detected a table structure, prioritize table extraction
@@ -146,7 +159,10 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
     // Try each extraction method until we get tasks
     for (const method of methodsToTry) {
       console.log(`Trying ${method.name}-based task extraction...`);
-      tasks = method.fn();
+      const result = method.fn();
+      tasks = result.tasks;
+      toolsData = result.toolsData || toolsData;
+      imtData = result.imtData || imtData;
       
       // If we found a good number of tasks, stop trying other methods
       if (tasks.length > 0) {
@@ -163,7 +179,9 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
     return {
       docTitle,
       tasks,
-      images
+      images,
+      toolsData,
+      imtData
     };
   } catch (error) {
     console.error('Error processing document:', error);
@@ -292,12 +310,19 @@ const extractTasks = (
   lines: string[], 
   docTitle: string, 
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
-  assemblySequenceId: string = '1'
-): Task[] => {
+  assemblySequenceId: string = '1',
+  toolsData: Array<{ task_no: string; tools: string }> = [],
+  imtData: Array<{ task_no: string; imt: string }> = []
+): { 
+  tasks: Task[], 
+  toolsData: Array<{ task_no: string; tools: string }>,
+  imtData: Array<{ task_no: string; imt: string }>
+} => {
   const tasks: Task[] = [];
   let currentTaskNum: number | null = null;
   let currentTask = '';
   let lastFoundTaskNum = 0;
+  let currentSpecification = '';
   
   // Filter out header rows at the beginning
   let startIndex = 0;
@@ -314,6 +339,52 @@ const extractTasks = (
     
     // Skip empty lines or header-like lines
     if (trimmedLine === '' || isHeaderRow(trimmedLine)) continue;
+    
+    // Check if line contains special paragraphs
+    const isToolsUsed = specialParagraphPatterns.tools.test(trimmedLine);
+    const isIMTUsed = specialParagraphPatterns.imt.test(trimmedLine);
+    const isKeyPoints = specialParagraphPatterns.keyPoints.test(trimmedLine);
+    const isNote = specialParagraphPatterns.note.test(trimmedLine);
+    
+    if ((isToolsUsed || isIMTUsed) && currentTaskNum) {
+      // Handle tools and IMT information
+      const taskId = formatTaskNumber(currentTaskNum.toString(), assemblySequenceId);
+      
+      if (isToolsUsed) {
+        const toolContent = trimmedLine.replace(specialParagraphPatterns.tools, '').trim();
+        toolsData.push({
+          task_no: taskId,
+          tools: toolContent
+        });
+        continue;
+      }
+      
+      if (isIMTUsed) {
+        const imtContent = trimmedLine.replace(specialParagraphPatterns.imt, '').trim();
+        imtData.push({
+          task_no: taskId,
+          imt: imtContent
+        });
+        continue;
+      }
+    }
+    
+    if ((isKeyPoints || isNote) && currentTaskNum) {
+      // Add key points and notes to the specification of the current task
+      const contentPrefix = isKeyPoints ? "Key points: " : "Note: ";
+      const content = trimmedLine.replace(
+        isKeyPoints ? specialParagraphPatterns.keyPoints : specialParagraphPatterns.note, 
+        ''
+      ).trim();
+      
+      if (currentSpecification) {
+        currentSpecification += '\n' + contentPrefix + content;
+      } else {
+        currentSpecification = contentPrefix + content;
+      }
+      
+      continue;
+    }
     
     // Check if line starts with any of the step number patterns
     let stepMatch = null;
@@ -338,11 +409,12 @@ const extractTasks = (
           eta_sec: '',
           description: docTitle, // Use document title as description
           activity: currentTask.trim(),
-          specification: '',
+          specification: currentSpecification,
           attachment: '',
           hasImage: false
         });
         lastFoundTaskNum = currentTaskNum;
+        currentSpecification = '';
       }
       
       // Start a new task with the extracted task number
@@ -387,13 +459,13 @@ const extractTasks = (
       eta_sec: '',
       description: docTitle, // Use document title as description
       activity: currentTask.trim(),
-      specification: '',
+      specification: currentSpecification,
       attachment: '',
       hasImage: false
     });
   }
   
-  return tasks;
+  return { tasks, toolsData, imtData };
 };
 
 // More aggressive task extraction method as a fallback for complex document formats
@@ -401,30 +473,95 @@ const extractTasksAggressively = (
   content: string,
   docTitle: string,
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
-  assemblySequenceId: string = '1'
-): Task[] => {
+  assemblySequenceId: string = '1',
+  toolsData: Array<{ task_no: string; tools: string }> = [],
+  imtData: Array<{ task_no: string; imt: string }> = []
+): {
+  tasks: Task[],
+  toolsData: Array<{ task_no: string; tools: string }>,
+  imtData: Array<{ task_no: string; imt: string }>
+} => {
   const tasks: Task[] = [];
   
   // Split by potential paragraph markers
   const paragraphs = content.split(/\n\n|\r\n\r\n/).filter(p => p.trim().length > 0);
   let taskIndex = 1;
   
+  let currentTaskNum: number | null = null;
+  let currentSpecification = '';
+  
   // First pass: look for paragraphs that appear to be tasks
   for (const paragraph of paragraphs) {
+    const trimmedParagraph = paragraph.trim();
+    
     // Skip very short paragraphs, likely headers, or header-like content
-    if (paragraph.trim().length < 10 || 
-        paragraph.trim() === docTitle || 
-        isHeaderRow(paragraph.trim())) continue;
+    if (trimmedParagraph.length < 10 || 
+        trimmedParagraph === docTitle || 
+        isHeaderRow(trimmedParagraph)) continue;
+    
+    // Check if paragraph contains special paragraphs
+    const isToolsUsed = specialParagraphPatterns.tools.test(trimmedParagraph);
+    const isIMTUsed = specialParagraphPatterns.imt.test(trimmedParagraph);
+    const isKeyPoints = specialParagraphPatterns.keyPoints.test(trimmedParagraph);
+    const isNote = specialParagraphPatterns.note.test(trimmedParagraph);
+    
+    if ((isToolsUsed || isIMTUsed) && currentTaskNum) {
+      // Handle tools and IMT information
+      const taskId = formatTaskNumber(currentTaskNum.toString(), assemblySequenceId);
+      
+      if (isToolsUsed) {
+        const toolContent = trimmedParagraph.replace(specialParagraphPatterns.tools, '').trim();
+        toolsData.push({
+          task_no: taskId,
+          tools: toolContent
+        });
+        continue;
+      }
+      
+      if (isIMTUsed) {
+        const imtContent = trimmedParagraph.replace(specialParagraphPatterns.imt, '').trim();
+        imtData.push({
+          task_no: taskId,
+          imt: imtContent
+        });
+        continue;
+      }
+    }
+    
+    if ((isKeyPoints || isNote) && currentTaskNum) {
+      // Add key points and notes to the specification of the current task
+      const contentPrefix = isKeyPoints ? "Key points: " : "Note: ";
+      const content = trimmedParagraph.replace(
+        isKeyPoints ? specialParagraphPatterns.keyPoints : specialParagraphPatterns.note, 
+        ''
+      ).trim();
+      
+      if (currentSpecification) {
+        currentSpecification += '\n' + contentPrefix + content;
+      } else {
+        currentSpecification = contentPrefix + content;
+      }
+      
+      // Apply this specification to the current task
+      if (tasks.length > 0) {
+        const lastTask = tasks[tasks.length - 1];
+        if (lastTask.task_no === formatTaskNumber(currentTaskNum.toString(), assemblySequenceId)) {
+          lastTask.specification = currentSpecification;
+        }
+      }
+      
+      continue;
+    }
     
     // Check for number patterns at the beginning of paragraphs
     let taskNum: number | null = null;
-    let restOfText = paragraph.trim();
+    let restOfText = trimmedParagraph;
     
     for (const pattern of stepNumberPatterns) {
-      const match = paragraph.match(pattern);
+      const match = trimmedParagraph.match(pattern);
       if (match) {
         taskNum = parseInt(match[1], 10);
-        restOfText = paragraph.substring(match[0].length).trim();
+        restOfText = trimmedParagraph.substring(match[0].length).trim();
         break;
       }
     }
@@ -432,12 +569,12 @@ const extractTasksAggressively = (
     // If no explicit task number found, try to detect if it could be a task
     if (taskNum === null) {
       // Check for indicators that this might be a task instruction
-      const mightBeTask = /^[A-Z][^\.]+\./.test(paragraph) || // Starts with capital letter and has a period
-                           /^(Check|Ensure|Remove|Install|Attach|Connect|Verify|Place|Position)/.test(paragraph); // Starts with action verb
+      const mightBeTask = /^[A-Z][^\.]+\./.test(trimmedParagraph) || // Starts with capital letter and has a period
+                           /^(Check|Ensure|Remove|Install|Attach|Connect|Verify|Place|Position)/.test(trimmedParagraph); // Starts with action verb
       
-      if (mightBeTask && paragraph.length > 20) {
+      if (mightBeTask && trimmedParagraph.length > 20) {
         taskNum = taskIndex++;
-        restOfText = paragraph.trim();
+        restOfText = trimmedParagraph;
       }
     } else {
       // If we found a task number, update our taskIndex to be at least this number
@@ -447,6 +584,7 @@ const extractTasksAggressively = (
     // Add the task if we determined this paragraph is a task
     if (taskNum !== null) {
       const formatted = formatTaskNumber(taskNum.toString(), assemblySequenceId);
+      currentTaskNum = taskNum;
       
       tasks.push({
         task_no: formatted,
@@ -467,10 +605,21 @@ const extractTasksAggressively = (
     let index = 1;
     
     for (const paragraph of paragraphs) {
+      const trimmedParagraph = paragraph.trim();
       // Skip very short paragraphs, duplicates of document title or obvious headers
-      if (paragraph.trim().length < 15 || 
-          paragraph.trim() === docTitle || 
-          isHeaderRow(paragraph.trim())) continue;
+      if (trimmedParagraph.length < 15 || 
+          trimmedParagraph === docTitle || 
+          isHeaderRow(trimmedParagraph)) continue;
+      
+      // Check for special paragraphs
+      const isToolsUsed = specialParagraphPatterns.tools.test(trimmedParagraph);
+      const isIMTUsed = specialParagraphPatterns.imt.test(trimmedParagraph);
+      const isKeyPoints = specialParagraphPatterns.keyPoints.test(trimmedParagraph);
+      const isNote = specialParagraphPatterns.note.test(trimmedParagraph);
+      
+      if (isToolsUsed || isIMTUsed || isKeyPoints || isNote) {
+        continue; // Skip these special paragraphs in this desperate mode
+      }
       
       const formatted = formatTaskNumber(index.toString(), assemblySequenceId);
       tasks.push({
@@ -478,7 +627,7 @@ const extractTasksAggressively = (
         type: 'Operation',
         eta_sec: '',
         description: docTitle, // Use document title as description
-        activity: paragraph.trim(),
+        activity: trimmedParagraph,
         specification: '',
         attachment: '',
         hasImage: false
@@ -488,7 +637,7 @@ const extractTasksAggressively = (
     }
   }
   
-  return tasks;
+  return { tasks, toolsData, imtData };
 };
 
 // Extract tasks from table-structured content with improved table parsing
@@ -496,8 +645,14 @@ const extractTasksFromTable = (
   content: string,
   docTitle: string,
   images: Array<{ task_no: string; imageData: Blob; contentType: string }>,
-  assemblySequenceId: string = '1'
-): Task[] => {
+  assemblySequenceId: string = '1',
+  toolsData: Array<{ task_no: string; tools: string }> = [],
+  imtData: Array<{ task_no: string; imt: string }> = []
+): {
+  tasks: Task[],
+  toolsData: Array<{ task_no: string; tools: string }>,
+  imtData: Array<{ task_no: string; imt: string }>
+} => {
   const tasks: Task[] = [];
   const lines = content.split('\n').filter(line => line.trim().length > 0);
   let taskNum = 1;
@@ -521,6 +676,56 @@ const extractTasksFromTable = (
     
     // Skip if this line also looks like a header
     if (isHeaderRow(line)) continue;
+    
+    // Check if line contains special paragraphs
+    const isToolsUsed = specialParagraphPatterns.tools.test(line);
+    const isIMTUsed = specialParagraphPatterns.imt.test(line);
+    const isKeyPoints = specialParagraphPatterns.keyPoints.test(line);
+    const isNote = specialParagraphPatterns.note.test(line);
+    
+    if (isToolsUsed || isIMTUsed) {
+      // Skip these as they'll be processed separately
+      if (tasks.length > 0) {
+        const lastTask = tasks[tasks.length - 1];
+        const taskId = lastTask.task_no;
+        
+        if (isToolsUsed) {
+          const toolContent = line.replace(specialParagraphPatterns.tools, '').trim();
+          toolsData.push({
+            task_no: taskId,
+            tools: toolContent
+          });
+        }
+        
+        if (isIMTUsed) {
+          const imtContent = line.replace(specialParagraphPatterns.imt, '').trim();
+          imtData.push({
+            task_no: taskId,
+            imt: imtContent
+          });
+        }
+      }
+      continue;
+    }
+    
+    if (isKeyPoints || isNote) {
+      // Add to specification of the last task
+      if (tasks.length > 0) {
+        const lastTask = tasks[tasks.length - 1];
+        const contentPrefix = isKeyPoints ? "Key points: " : "Note: ";
+        const content = line.replace(
+          isKeyPoints ? specialParagraphPatterns.keyPoints : specialParagraphPatterns.note, 
+          ''
+        ).trim();
+        
+        if (lastTask.specification) {
+          lastTask.specification += '\n' + contentPrefix + content;
+        } else {
+          lastTask.specification = contentPrefix + content;
+        }
+      }
+      continue;
+    }
     
     // Try to find task number using various patterns
     let taskNumber: number | null = null;
@@ -581,7 +786,7 @@ const extractTasksFromTable = (
     }
   }
   
-  return tasks;
+  return { tasks, toolsData, imtData };
 };
 
 // Format the task number as required (e.g., for assembly ID 1, task 1 becomes 1.0.001)
@@ -745,7 +950,12 @@ const getContentTypeFromPath = (path: string): string => {
 };
 
 // Generate an Excel file from extracted tasks
-export const generateExcelFile = async (tasks: Task[], docTitle: string): Promise<Blob> => {
+export const generateExcelFile = async (
+  tasks: Task[], 
+  docTitle: string, 
+  toolsData?: Array<{ task_no: string; tools: string }>,
+  imtData?: Array<{ task_no: string; imt: string }>
+): Promise<Blob> => {
   try {
     // Create workbook
     const wb = XLSX.utils.book_new();
@@ -761,11 +971,23 @@ export const generateExcelFile = async (tasks: Task[], docTitle: string): Promis
       attachment: task.attachment
     }));
     
-    // Create worksheet
+    // Create main worksheet
     const ws = XLSX.utils.json_to_sheet(excelData);
     
-    // Add worksheet to workbook
+    // Add main worksheet to workbook
     XLSX.utils.book_append_sheet(wb, ws, "Tasks");
+    
+    // Add Tools worksheet if data exists
+    if (toolsData && toolsData.length > 0) {
+      const toolsSheet = XLSX.utils.json_to_sheet(toolsData);
+      XLSX.utils.book_append_sheet(wb, toolsSheet, `${docTitle}_Task tool`);
+    }
+    
+    // Add IMT worksheet if data exists
+    if (imtData && imtData.length > 0) {
+      const imtSheet = XLSX.utils.json_to_sheet(imtData);
+      XLSX.utils.book_append_sheet(wb, imtSheet, `${docTitle}_Task IMT`);
+    }
     
     // Generate Excel file
     const excelBlob = new Blob(

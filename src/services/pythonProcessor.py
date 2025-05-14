@@ -1,4 +1,3 @@
-
 import os
 import re
 import sys
@@ -22,6 +21,14 @@ import random
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
+# Add patterns for special paragraphs
+special_paragraph_patterns = {
+    'tools': re.compile(r'^Tools\s+used:?\s*', re.IGNORECASE),
+    'imt': re.compile(r'^IMT\s+used:?\s*', re.IGNORECASE),
+    'key_points': re.compile(r'^Key\s+points:?\s*', re.IGNORECASE),
+    'note': re.compile(r'^Note:?\s*', re.IGNORECASE)
+}
+
 def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_range, figure_end_range):
     """
     Extract tasks from a Word document that contains a table.
@@ -34,7 +41,7 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
         figure_end_range: Ending number for figure references
     
     Returns:
-        Tuple of (tasks_df, images_dict)
+        Tuple of (tasks_df, images_dict, tools_df, imt_df)
     """
     try:
         # Load the document
@@ -45,6 +52,8 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
         images = {}
         image_map = {}  # Map to track figure references to image_ids
         image_task_mapping = {}  # Map to track which tasks reference which images
+        tools_data = []  # To store tools used data
+        imt_data = []   # To store IMT used data
         
         # Find tables in the document
         if len(doc.tables) == 0:
@@ -207,6 +216,47 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
                         'attachment': ''  # Will be populated after processing all tasks and images
                     }
                     
+                    # Check if this is a special paragraph
+                    is_tools_used = False
+                    is_imt_used = False
+                    is_key_points = False
+                    is_note = False
+                    
+                    for paragraph in job_details_cell.paragraphs:
+                        text = paragraph.text.strip()
+                        if special_paragraph_patterns['tools'].match(text):
+                            is_tools_used = True
+                            tool_content = special_paragraph_patterns['tools'].sub('', text).strip()
+                            tools_data.append({
+                                'task_no': task_number,
+                                'tools': tool_content
+                            })
+                        elif special_paragraph_patterns['imt'].match(text):
+                            is_imt_used = True
+                            imt_content = special_paragraph_patterns['imt'].sub('', text).strip()
+                            imt_data.append({
+                                'task_no': task_number,
+                                'imt': imt_content
+                            })
+                        elif special_paragraph_patterns['key_points'].match(text):
+                            is_key_points = True
+                            key_points = special_paragraph_patterns['key_points'].sub('', text).strip()
+                            if 'specification' in task:
+                                task['specification'] += f"\nKey points: {key_points}"
+                            else:
+                                task['specification'] = f"Key points: {key_points}"
+                        elif special_paragraph_patterns['note'].match(text):
+                            is_note = True
+                            note = special_paragraph_patterns['note'].sub('', text).strip()
+                            if 'specification' in task:
+                                task['specification'] += f"\nNote: {note}"
+                            else:
+                                task['specification'] = f"Note: {note}"
+                    
+                    # Skip special paragraphs as they're not tasks
+                    if is_tools_used or is_imt_used:
+                        continue
+                    
                     tasks.append(task)
                     
                 except Exception as e:
@@ -276,15 +326,17 @@ def extract_tasks_from_word(docx_path, assembly_id, assembly_name, figure_start_
         
         # Create DataFrame
         if tasks:
-            df = pd.DataFrame(tasks)
-            return df, images
+            tasks_df = pd.DataFrame(tasks)
+            tools_df = pd.DataFrame(tools_data) if tools_data else None
+            imt_df = pd.DataFrame(imt_data) if imt_data else None
+            return tasks_df, images, tools_df, imt_df
         else:
             logger.warning("No tasks extracted from the document")
-            return None, {}
+            return None, {}, None, None
             
     except Exception as e:
         logger.error(f"Error processing document: {e}")
-        return None, {}
+        return None, {}, None, None
 
 def extract_tasks_from_paragraphs(doc, assembly_id, assembly_name, figure_start_range, figure_end_range):
     """
@@ -295,10 +347,13 @@ def extract_tasks_from_paragraphs(doc, assembly_id, assembly_name, figure_start_
         images = {}
         image_map = {}
         image_task_mapping = {}
+        tools_data = []  # To store tools used data
+        imt_data = []    # To store IMT used data
         
         paragraphs = doc.paragraphs
         current_task = None
         current_task_text = ""
+        current_specification = ""
         task_index = 0
         
         # Define patterns to identify task headers
@@ -327,7 +382,49 @@ def extract_tasks_from_paragraphs(doc, assembly_id, assembly_name, figure_start_
             # Skip empty paragraphs
             if not text:
                 continue
+        
+            # Check for special paragraphs
+            is_tools_used = special_paragraph_patterns['tools'].match(text)
+            is_imt_used = special_paragraph_patterns['imt'].match(text)
+            is_key_points = special_paragraph_patterns['key_points'].match(text)
+            is_note = special_paragraph_patterns['note'].match(text)
+            
+            if is_tools_used and current_task is not None:
+                # Process tools used
+                tools_content = special_paragraph_patterns['tools'].sub('', text).strip()
+                tools_data.append({
+                    'task_no': f"{assembly_id}.0.{str(current_task).zfill(3)}",
+                    'tools': tools_content
+                })
+                continue
                 
+            if is_imt_used and current_task is not None:
+                # Process IMT used
+                imt_content = special_paragraph_patterns['imt'].sub('', text).strip()
+                imt_data.append({
+                    'task_no': f"{assembly_id}.0.{str(current_task).zfill(3)}",
+                    'imt': imt_content
+                })
+                continue
+                
+            if is_key_points and current_task is not None:
+                # Add key points to specification
+                key_points = special_paragraph_patterns['key_points'].sub('', text).strip()
+                if current_specification:
+                    current_specification += f"\nKey points: {key_points}"
+                else:
+                    current_specification = f"Key points: {key_points}"
+                continue
+                
+            if is_note and current_task is not None:
+                # Add note to specification
+                note = special_paragraph_patterns['note'].sub('', text).strip()
+                if current_specification:
+                    current_specification += f"\nNote: {note}"
+                else:
+                    current_specification = f"Note: {note}"
+                continue
+        
             # Check if this paragraph starts a new task
             is_task_start = False
             task_num = None
@@ -352,10 +449,11 @@ def extract_tasks_from_paragraphs(doc, assembly_id, assembly_name, figure_start_
                         'eta_sec': '',
                         'description': assembly_name,
                         'activity': current_task_text.strip(),
-                        'specification': '',
+                        'specification': current_specification,
                         'attachment': ''
                     }
                     tasks.append(task)
+                    current_specification = ""
                 
                 # Start new task with the extracted task number
                 current_task = task_num
@@ -385,7 +483,7 @@ def extract_tasks_from_paragraphs(doc, assembly_id, assembly_name, figure_start_
                 'eta_sec': '',
                 'description': assembly_name,
                 'activity': current_task_text.strip(),
-                'specification': '',
+                'specification': current_specification,
                 'attachment': ''
             }
             tasks.append(task)
@@ -507,17 +605,19 @@ def extract_tasks_from_paragraphs(doc, assembly_id, assembly_name, figure_start_
                     task_images = image_keys[start_idx:end_idx]
                     task['attachment'] = ', '.join(task_images)
         
-        # Create DataFrame
+        # Create DataFrames
         if tasks:
-            df = pd.DataFrame(tasks)
-            return df, images
+            tasks_df = pd.DataFrame(tasks)
+            tools_df = pd.DataFrame(tools_data) if tools_data else None
+            imt_df = pd.DataFrame(imt_data) if imt_data else None
+            return tasks_df, images, tools_df, imt_df
         else:
             logger.warning("No tasks extracted from the document")
-            return None, {}
+            return None, {}, None, None
             
     except Exception as e:
         logger.error(f"Error in paragraph extraction: {e}")
-        return None, {}
+        return None, {}, None, None
 
 def extract_figure_references(text, task_number, image_task_mapping, image_map, figure_start_range, figure_end_range, assembly_id):
     """Extract figure references from text and update mappings"""
@@ -635,179 +735,3 @@ def guess_image_extension(image_data):
     Determine the image file extension based on its data.
     """
     import imghdr
-    img_type = imghdr.what(None, h=image_data)
-    if img_type == 'jpeg':
-        return 'jpg'
-    return img_type or 'png'
-
-def save_tasks_to_excel(df, assembly_name, output_path):
-    """
-    Save tasks to Excel file with proper formatting.
-    
-    Args:
-        df: DataFrame containing tasks
-        assembly_name: Name of the assembly to set as description
-        output_path: Path to save the Excel file
-    """
-    try:
-        # Set the description column to the assembly name
-        if df is not None and not df.empty:
-            # Make column headers match the expected format
-            df = df.rename(columns={
-                'task_no': 'task_no',
-                'type': 'type',
-                'eta_sec': 'eta_sec',
-                'description': 'description',
-                'activity': 'activity',
-                'specification': 'specification',
-                'attachment': 'attachment'
-            })
-            
-            # Ensure the description is set to assembly name for all rows
-            df['description'] = assembly_name
-            
-            # Create a new Excel workbook with proper formatting
-            wb = Workbook()
-            ws = wb.active
-            
-            # Add headers with formatting
-            headers = ['task_no', 'type', 'eta_sec', 'description', 'activity', 'specification', 'attachment']
-            for col_idx, header in enumerate(headers, 1):
-                cell = ws.cell(row=1, column=col_idx, value=header)
-                # Apply red font color to first 3 columns
-                if col_idx <= 3:
-                    cell.font = Font(color="FF0000")
-            
-            # Add data rows
-            for row_idx, row in enumerate(df.itertuples(index=False), 2):
-                for col_idx, value in enumerate(row, 1):
-                    ws.cell(row=row_idx, column=col_idx, value=value)
-            
-            # Save to Excel
-            wb.save(output_path)
-            return True
-        return False
-    except Exception as e:
-        logger.error(f"Error saving Excel file: {e}")
-        return False
-
-def save_images(images, output_dir):
-    """
-    Save extracted images to directory.
-    
-    Args:
-        images: Dictionary mapping image IDs to image data
-        output_dir: Directory to save images
-    """
-    try:
-        os.makedirs(output_dir, exist_ok=True)
-        for image_id, image_info in images.items():
-            output_path = os.path.join(output_dir, f"{image_id}.{image_info['extension']}")
-            with open(output_path, 'wb') as f:
-                f.write(image_info['data'])
-        return True
-    except Exception as e:
-        logger.error(f"Error saving images: {e}")
-        return False
-
-def create_zip_package(excel_path, images_dir, output_path, assembly_name):
-    """
-    Create a ZIP package containing Excel file and images.
-    
-    Args:
-        excel_path: Path to Excel file
-        images_dir: Directory containing images
-        output_path: Path to save the ZIP file
-        assembly_name: Name of the assembly to use for file naming
-    """
-    try:
-        with zipfile.ZipFile(output_path, 'w') as zipf:
-            # Add Excel file with assembly name
-            zipf.write(excel_path, arcname=f"{assembly_name}.xlsx")
-            
-            # Add images
-            for root, _, files in os.walk(images_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.join('images', file)
-                    zipf.write(file_path, arcname=arcname)
-        return True
-    except Exception as e:
-        logger.error(f"Error creating ZIP package: {e}")
-        return False
-
-# Main function to process document
-def process_document(input_file, assembly_id, assembly_name, figure_start, figure_end):
-    """
-    Process a Word document to extract tasks and images.
-    
-    Args:
-        input_file: Path to input Word document
-        assembly_id: Assembly sequence ID
-        assembly_name: Name of the assembly (description)
-        figure_start: Starting figure reference number
-        figure_end: Ending figure reference number
-    
-    Returns:
-        Dictionary with processing results
-    """
-    try:
-        # Create temp directory
-        temp_dir = os.path.join(os.path.dirname(input_file), "temp_processing")
-        os.makedirs(temp_dir, exist_ok=True)
-        
-        logger.info(f"Processing document with assembly ID: {assembly_id}, name: {assembly_name}")
-        logger.info(f"Figure range: {figure_start} to {figure_end}")
-        
-        # Extract tasks and images
-        tasks_df, images = extract_tasks_from_word(
-            input_file, 
-            assembly_id, 
-            assembly_name, 
-            figure_start, 
-            figure_end
-        )
-        
-        if tasks_df is None or tasks_df.empty:
-            return {'success': False, 'message': 'No tasks could be extracted from the document'}
-        
-        # Save tasks to Excel - use assembly_name for the file name
-        excel_path = os.path.join(temp_dir, f"{assembly_name}.xlsx")
-        save_tasks_to_excel(tasks_df, assembly_name, excel_path)
-        
-        # Save images
-        images_dir = os.path.join(temp_dir, "images")
-        save_images(images, images_dir)
-        
-        # Create ZIP package - use assembly_name for the zip file name
-        zip_path = os.path.join(os.path.dirname(input_file), f"{assembly_name}_extracted_data.zip")
-        create_zip_package(excel_path, images_dir, zip_path, assembly_name)
-        
-        # Return results
-        return {
-            'success': True,
-            'message': f'Successfully processed document. Extracted {len(tasks_df)} tasks and {len(images)} images.',
-            'tasks': tasks_df.to_dict('records'),
-            'images_count': len(images),
-            'excel_path': excel_path,
-            'zip_path': zip_path
-        }
-    except Exception as e:
-        logger.error(f"Error in process_document: {str(e)}")
-        return {'success': False, 'message': f'Error: {str(e)}'}
-
-# Command line interface
-if __name__ == "__main__":
-    if len(sys.argv) < 6:
-        print("Usage: python script.py input_file assembly_id assembly_name figure_start figure_end")
-        sys.exit(1)
-    
-    input_file = sys.argv[1]
-    assembly_id = sys.argv[2]
-    assembly_name = sys.argv[3]
-    figure_start = int(sys.argv[4])
-    figure_end = int(sys.argv[5])
-    
-    result = process_document(input_file, assembly_id, assembly_name, figure_start, figure_end)
-    # Print as JSON for the Node.js wrapper to parse
-    print(json.dumps(result))

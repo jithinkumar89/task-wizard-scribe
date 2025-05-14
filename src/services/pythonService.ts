@@ -15,6 +15,7 @@ export const runPythonProcessor = async (
   assemblyName: string,
   figureStart: number,
   figureEnd: number,
+  type: string = "",
   logoPath?: string
 ): Promise<{
   success: boolean;
@@ -37,7 +38,8 @@ export const runPythonProcessor = async (
       assemblyId,
       assemblyName,
       figureStart.toString(),
-      figureEnd.toString()
+      figureEnd.toString(),
+      type
     ];
     
     // Add logo path if provided

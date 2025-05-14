@@ -1,442 +1,280 @@
 
-import React, { useState } from 'react';
+import { useState, useRef } from 'react';
 import { Button } from '@/components/ui/button';
-import { Card, CardContent } from '@/components/ui/card';
-import { Download, HelpCircle, FileText } from 'lucide-react';
-import { useToast } from '@/hooks/use-toast';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import FileUploader from '@/components/FileUploader';
 import ProcessingIndicator from '@/components/ProcessingIndicator';
-import TaskPreview, { Task } from '@/components/TaskPreview';
+import TaskPreview from '@/components/TaskPreview';
 import { processDocument, generateExcelFile, createDownloadPackage } from '@/services/docxProcessor';
-import { processPythonDocument } from '@/services/pythonBridge';
+import { toast } from '@/hooks/use-toast';
+import Footer from '@/components/Footer';
 import { saveAs } from 'file-saver';
-
-type ProcessingStatus = 'idle' | 'parsing' | 'extracting' | 'generating' | 'complete' | 'error';
+import { Task } from '@/components/TaskPreview';
 
 const Index = () => {
+  const [assemblySequenceId, setAssemblySequenceId] = useState('1');
+  const [assemblyName, setAssemblyName] = useState('');
+  const [figureStartRange, setFigureStartRange] = useState(0);
+  const [figureEndRange, setFigureEndRange] = useState(999);
+  const [type, setType] = useState('');
   const [file, setFile] = useState<File | null>(null);
-  const [status, setStatus] = useState<ProcessingStatus>('idle');
-  const [progress, setProgress] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [docTitle, setDocTitle] = useState('');
-  const [errorMessage, setErrorMessage] = useState('');
-  const [downloadPackage, setDownloadPackage] = useState<Blob | null>(null);
-  const [excelFile, setExcelFile] = useState<Blob | null>(null);
-  const [assemblySequenceId, setAssemblySequenceId] = useState<string>('1');
-  const [assemblyName, setAssemblyName] = useState<string>('');
-  const [figureStartRange, setFigureStartRange] = useState<string>('1');
-  const [figureEndRange, setFigureEndRange] = useState<string>('10');
-  const [useTableExtraction, setUseTableExtraction] = useState<boolean>(true);
-  const { toast } = useToast();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Handle file upload
-  const handleFileSelect = async (selectedFile: File) => {
-    setFile(selectedFile);
-    setStatus('parsing');
-    setProgress(10);
+  const resetForm = () => {
+    setAssemblySequenceId('1');
+    setAssemblyName('');
+    setFigureStartRange(0);
+    setFigureEndRange(999);
+    setType('');
+    setFile(null);
     setTasks([]);
     setDocTitle('');
-    setErrorMessage('');
-    setDownloadPackage(null);
-    setExcelFile(null);
-    
-    if (!assemblySequenceId || isNaN(Number(assemblySequenceId))) {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleFileChange = (file: File | null) => {
+    setFile(file);
+    // Reset tasks preview when a new file is selected
+    setTasks([]);
+    setDocTitle('');
+  };
+
+  const handleProcessDocument = async () => {
+    if (!file) {
       toast({
-        variant: "destructive",
-        title: "Invalid Assembly Sequence ID",
-        description: "Please enter a valid number for the Assembly Sequence ID"
+        title: 'No File Selected',
+        description: 'Please select a document to process.',
+        variant: 'destructive',
       });
-      setStatus('idle');
       return;
     }
 
     if (!assemblyName.trim()) {
       toast({
-        variant: "destructive",
-        title: "Missing Assembly Name",
-        description: "Please enter a name for the assembly to use as the description"
+        title: 'Missing Assembly Name',
+        description: 'Please enter an assembly name.',
+        variant: 'destructive',
       });
-      setStatus('idle');
       return;
     }
-    
+
     try {
-      // Process the document
-      setProgress(30);
-      console.log('Processing document:', selectedFile.name, 'with Assembly Sequence ID:', assemblySequenceId);
-      
-      let extractedContent;
-      
-      if (useTableExtraction) {
-        // Try using Python-based table extraction (this will throw an error in browser environment)
-        try {
-          const pythonResult = await processPythonDocument(
-            selectedFile, 
-            assemblySequenceId, 
-            assemblyName,
-            parseInt(figureStartRange, 10),
-            parseInt(figureEndRange, 10)
-          );
-          
-          extractedContent = {
-            docTitle: pythonResult.docTitle,
-            tasks: pythonResult.tasks,
-            images: [] // Images are handled differently in Python implementation
-          };
-          
-          // Set download package directly from Python result
-          setDownloadPackage(pythonResult.zipPackage);
-          setExcelFile(pythonResult.excelFile);
-        } catch (error) {
-          console.log("Python processing unavailable, falling back to JavaScript implementation:", error);
-          // Fall back to JavaScript implementation
-          extractedContent = await processDocument(selectedFile, assemblySequenceId);
-          
-          // Update all tasks to have the specified assembly name as description
-          if (extractedContent.tasks && extractedContent.tasks.length > 0) {
-            extractedContent.tasks = extractedContent.tasks.map(task => ({
-              ...task,
-              description: assemblyName
-            }));
-          }
-        }
-      } else {
-        // Use JavaScript implementation directly
-        extractedContent = await processDocument(selectedFile, assemblySequenceId);
-        
-        // Update all tasks to have the specified assembly name as description
-        if (extractedContent.tasks && extractedContent.tasks.length > 0) {
-          extractedContent.tasks = extractedContent.tasks.map(task => ({
-            ...task,
-            description: assemblyName
-          }));
-        }
-      }
-      
-      // Update state with extracted content
-      setStatus('extracting');
-      setProgress(60);
-      
-      // Check if we have tasks
-      if (!extractedContent.tasks || extractedContent.tasks.length === 0) {
-        console.error('No tasks were extracted from the document');
-        throw new Error('No tasks could be extracted from the document. Please check the file format or ensure it contains numbered steps or a table structure.');
-      }
-      
-      setTasks(extractedContent.tasks);
-      setDocTitle(extractedContent.docTitle || assemblyName || 'Unnamed Document');
-      
-      console.log(`Successfully extracted ${extractedContent.tasks.length} tasks`);
-      
-      // Generate the Excel file if not already done by Python implementation
-      if (!excelFile) {
-        setStatus('generating');
-        setProgress(80);
-        
-        try {
-          // Generate Excel file
-          const excelBlob = await generateExcelFile(extractedContent.tasks, assemblyName || extractedContent.docTitle);
-          setExcelFile(excelBlob);
-          
-          // Create downloadable package
-          const zipBlob = await createDownloadPackage(
-            excelBlob,
-            extractedContent.images || [],
-            assemblyName || extractedContent.docTitle || 'Unnamed Document'
-          );
-          setDownloadPackage(zipBlob);
-        } catch (error) {
-          console.error("Error generating download files:", error);
-          throw new Error("Failed to create download files. Please try again or check file format.");
-        }
-      }
-      
-      // Complete
-      setStatus('complete');
-      setProgress(100);
+      setIsProcessing(true);
+      const result = await processDocument(file, assemblySequenceId, type);
+      setTasks(result.tasks);
+      setDocTitle(result.docTitle || assemblyName);
       
       toast({
-        title: "Processing complete",
-        description: `${extractedContent.tasks.length} tasks extracted successfully.`
+        title: 'Document Processed',
+        description: `Extracted ${result.tasks.length} tasks and ${result.images.length} images.`,
       });
     } catch (error) {
       console.error('Error processing document:', error);
-      setStatus('error');
-      setProgress(0);
-      setErrorMessage((error as Error).message || 'Unknown error occurred');
+      toast({
+        title: 'Processing Error',
+        description: (error as Error).message,
+        variant: 'destructive',
+      });
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const handleDownload = async () => {
+    if (!file || tasks.length === 0) {
+      toast({
+        title: 'Nothing to Download',
+        description: 'Please process a document first.',
+        variant: 'destructive',
+      });
+      return;
+    }
+
+    try {
+      setIsProcessing(true);
+      
+      // Re-process the document to ensure we have the latest data
+      const processedData = await processDocument(file, assemblySequenceId, type);
+      
+      // Generate Excel file with all data
+      const excelBlob = await generateExcelFile(
+        processedData.tasks, 
+        processedData.docTitle || assemblyName,
+        processedData.toolsData,
+        processedData.imtData
+      );
+      
+      // Create download package with Excel and images
+      const zipBlob = await createDownloadPackage(
+        excelBlob,
+        processedData.images,
+        processedData.docTitle || assemblyName
+      );
+      
+      // Download the ZIP package
+      saveAs(zipBlob, `${assemblyName}_processed.zip`);
       
       toast({
-        variant: "destructive",
-        title: "Processing failed",
-        description: (error as Error).message || 'Unknown error occurred'
+        title: 'Download Ready',
+        description: 'Your processed document package has been downloaded.',
       });
-    }
-  };
-
-  // Handle package download
-  const handleDownload = () => {
-    if (downloadPackage) {
-      saveAs(downloadPackage, `${assemblyName || docTitle || 'Task_Master'}_extracted_data.zip`);
+    } catch (error) {
+      console.error('Error generating download:', error);
       toast({
-        title: "Download started",
-        description: "Your SOP package is being downloaded"
+        title: 'Download Error',
+        description: (error as Error).message,
+        variant: 'destructive',
       });
+    } finally {
+      setIsProcessing(false);
     }
-  };
-  
-  // Handle Excel-only download
-  const handleExcelDownload = () => {
-    if (excelFile) {
-      saveAs(excelFile, `${assemblyName || docTitle || 'Task_Master'}.xlsx`);
-      toast({
-        title: "Excel download started",
-        description: "Your task Excel file is being downloaded"
-      });
-    }
-  };
-  
-  // Handle images-only download
-  const handleImagesDownload = () => {
-    if (downloadPackage) {
-      // The createDownloadPackage already creates a zip with images folder
-      saveAs(downloadPackage, `${assemblyName || docTitle || 'Task_Master'}_images.zip`);
-      toast({
-        title: "Images download started",
-        description: "Your images package is being downloaded"
-      });
-    }
-  };
-
-  // Reset all form fields and data
-  const handleReset = () => {
-    setFile(null);
-    setStatus('idle');
-    setProgress(0);
-    setTasks([]);
-    setDocTitle('');
-    setErrorMessage('');
-    setDownloadPackage(null);
-    setExcelFile(null);
-    setAssemblySequenceId('1');
-    setAssemblyName('');
-    setFigureStartRange('1');
-    setFigureEndRange('10');
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-indigo-50 to-purple-50">
-      {/* Header */}
-      <header className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 text-white py-6 shadow-lg">
-        <div className="container mx-auto px-4">
-          <div className="flex justify-between items-center">
-            <div className="flex items-center space-x-2">
-              <FileText size={30} className="text-white/90" />
-              <h1 className="text-2xl font-bold">SOP Task Master Generator</h1>
-            </div>
-            <div className="bg-white/20 backdrop-blur-sm p-2 rounded-lg">
-              <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Medical Technologies Logo" className="h-10" />
-            </div>
-          </div>
+    <div className="container mx-auto p-4 min-h-screen flex flex-col">
+      <header className="text-center mb-8">
+        <div className="inline-block bg-white p-3 rounded-xl shadow-md">
+          <img 
+            src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" 
+            alt="SOP Processor Logo" 
+            className="h-16"
+          />
         </div>
+        <h1 className="text-2xl font-bold mt-4 bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 bg-clip-text text-transparent">
+          SOP Processor
+        </h1>
       </header>
-      
-      {/* Main content */}
-      <main className="container mx-auto px-4 py-10">
-        <div className="max-w-4xl mx-auto">
-          <Card className="mb-8 overflow-hidden shadow-lg border-0 bg-white/80 backdrop-blur-sm">
-            <div className="bg-gradient-to-r from-indigo-100 to-purple-100 p-4 border-b">
-              <h2 className="text-lg font-medium flex items-center text-gray-800">
-                <HelpCircle size={20} className="mr-2 text-indigo-600" />
-                How it works
-              </h2>
-            </div>
-            <CardContent className="p-6 space-y-3 text-sm">
-              <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">1</span>
-                Enter the Assembly Sequence ID (e.g., 1, 2, 3...) and Assembly Name.
-              </p>
-              <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">2</span>
-                If your document contains figure references, enter the figure range (e.g., 1-10).
-              </p>
-              <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">3</span>
-                Upload your SOP Word document (.docx) containing a table with tasks.
-              </p>
-              <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">4</span>
-                The application will extract each task and assign task numbers in the format "{assemblySequenceId}.0.001".
-              </p>
-              <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">5</span>
-                Images will be extracted and renamed according to the figure references in the document.
-              </p>
-              <p className="flex items-center">
-                <span className="w-6 h-6 rounded-full bg-gradient-to-br from-blue-600 to-purple-600 text-white flex items-center justify-center mr-2 text-xs font-bold">6</span>
-                Download the complete package, Excel file or just the images separately.
-              </p>
-            </CardContent>
-          </Card>
-          
-          {/* Input form */}
-          {status === 'idle' && (
-            <div className="mb-6 bg-white/90 backdrop-blur-sm p-6 rounded-lg shadow-md border border-blue-100 space-y-5">
+
+      <main className="flex-grow">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          <Card>
+            <CardHeader className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 text-white">
+              <CardTitle className="text-white">Upload Document</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4 pt-6">
               <div>
-                <Label htmlFor="sequenceId" className="text-sm font-medium text-gray-700">
-                  Assembly Sequence ID
-                </Label>
-                <div className="flex mt-2 gap-2 items-center">
-                  <Input
-                    id="sequenceId"
-                    type="number"
-                    min="1"
-                    value={assemblySequenceId}
-                    onChange={(e) => setAssemblySequenceId(e.target.value)}
-                    className="w-32 border-indigo-200 focus:border-indigo-400"
-                    placeholder="e.g., 1"
-                  />
-                  <p className="text-sm text-gray-500">
-                    This will be used to prefix task numbers (e.g., {assemblySequenceId}.0.001)
-                  </p>
-                </div>
+                <Label htmlFor="assemblySequenceId">Assembly Sequence ID</Label>
+                <Input
+                  id="assemblySequenceId"
+                  placeholder="e.g., 1"
+                  value={assemblySequenceId}
+                  onChange={(e) => setAssemblySequenceId(e.target.value)}
+                />
               </div>
               
               <div>
-                <Label htmlFor="assemblyName" className="text-sm font-medium text-gray-700">
-                  Assembly Name
-                </Label>
-                <div className="flex mt-2 gap-2 items-center">
-                  <Input
-                    id="assemblyName"
-                    type="text"
-                    value={assemblyName}
-                    onChange={(e) => setAssemblyName(e.target.value)}
-                    className="w-full border-indigo-200 focus:border-indigo-400"
-                    placeholder="e.g., Engine Assembly"
-                  />
-                </div>
-                <p className="text-sm text-gray-500 mt-1">
-                  This will be used as the description for all tasks and for output files naming
-                </p>
+                <Label htmlFor="assemblyName">Assembly Name</Label>
+                <Input
+                  id="assemblyName"
+                  placeholder="e.g., Engine Assembly"
+                  value={assemblyName}
+                  onChange={(e) => setAssemblyName(e.target.value)}
+                />
               </div>
               
               <div>
-                <Label className="text-sm font-medium text-gray-700">
-                  Figure Reference Range
-                </Label>
-                <div className="flex mt-2 gap-2 items-center">
+                <Label htmlFor="type">Type</Label>
+                <Input
+                  id="type"
+                  placeholder="e.g., Maintenance, Installation, etc."
+                  value={type}
+                  onChange={(e) => setType(e.target.value)}
+                />
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <Label htmlFor="figureStartRange">Figure Start Range</Label>
                   <Input
                     id="figureStartRange"
                     type="number"
-                    min="1"
+                    min="0"
+                    placeholder="0"
                     value={figureStartRange}
-                    onChange={(e) => setFigureStartRange(e.target.value)}
-                    className="w-24 border-indigo-200 focus:border-indigo-400"
-                    placeholder="Start"
+                    onChange={(e) => setFigureStartRange(Number(e.target.value))}
                   />
-                  <span>to</span>
+                </div>
+                <div>
+                  <Label htmlFor="figureEndRange">Figure End Range</Label>
                   <Input
                     id="figureEndRange"
                     type="number"
-                    min="1"
+                    min="0"
+                    placeholder="999"
                     value={figureEndRange}
-                    onChange={(e) => setFigureEndRange(e.target.value)}
-                    className="w-24 border-indigo-200 focus:border-indigo-400"
-                    placeholder="End"
+                    onChange={(e) => setFigureEndRange(Number(e.target.value))}
                   />
-                  <p className="text-sm text-gray-500">
-                    If your document uses "Figure X" references
-                  </p>
                 </div>
               </div>
-            </div>
-          )}
-          
-          {/* File uploader */}
-          {status === 'idle' && (
-            <FileUploader onFileSelect={handleFileSelect} />
-          )}
-          
-          {/* Processing indicator */}
-          {['parsing', 'extracting', 'generating', 'complete', 'error'].includes(status) && (
-            <div className="mb-8">
-              <ProcessingIndicator 
-                status={status as any}
-                progress={progress} 
-                error={errorMessage}
-              />
-            </div>
-          )}
-          
-          {/* Results section */}
-          {tasks.length > 0 && (
-            <div className="space-y-6">
-              <h2 className="text-xl font-semibold text-gray-800 flex items-center">
-                <span className="w-2 h-8 bg-gradient-to-b from-blue-600 to-purple-600 rounded mr-2"></span>
-                Extracted Tasks Preview
-              </h2>
-              
-              <TaskPreview tasks={tasks} documentTitle={assemblyName || docTitle} />
-              
-              {/* Download buttons */}
-              {status === 'complete' && downloadPackage && (
-                <div className="flex flex-wrap justify-center mt-8 gap-4">
-                  <Button 
-                    onClick={handleDownload}
-                    className="bg-gradient-to-r from-blue-600 via-indigo-500 to-purple-600 hover:from-blue-700 hover:via-indigo-600 hover:to-purple-700 px-6 py-5 shadow-lg transition-all duration-300 hover:shadow-xl"
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Complete Package
-                  </Button>
-                  
-                  <Button 
-                    onClick={handleExcelDownload}
-                    variant="outline"
-                    className="px-6 py-5 border-indigo-300 text-indigo-700 hover:bg-indigo-50 transition-colors duration-300"
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Excel File
-                  </Button>
-                  
-                  <Button 
-                    onClick={handleImagesDownload}
-                    variant="outline"
-                    className="px-6 py-5 border-indigo-300 text-indigo-700 hover:bg-indigo-50 transition-colors duration-300"
-                  >
-                    <Download className="mr-2 h-4 w-4" />
-                    Download Images Only
-                  </Button>
-                </div>
-              )}
-              
-              {/* Upload another file button */}
-              {status === 'complete' && (
-                <div className="flex justify-center mt-6">
-                  <Button 
-                    variant="outline"
-                    onClick={handleReset}
-                    className="border-indigo-300 text-indigo-700 hover:bg-indigo-50 transition-colors duration-300"
-                  >
-                    Process Another Document
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </main>
-      
-      {/* Footer */}
-      <footer className="bg-gradient-to-r from-gray-100 to-indigo-100 py-6 mt-12">
-        <div className="container mx-auto px-4 text-center text-sm text-gray-600 flex justify-center items-center space-x-2">
-          <span>SOP Task Master Generator - BPL Medical Technologies</span>
-          <div className="bg-white/50 backdrop-blur-sm p-1 rounded-md">
-            <img src="/lovable-uploads/1ac64f9b-f851-4336-8290-0ae34c0deb10.png" alt="BPL Logo" className="h-5" />
+
+              <div>
+                <Label>Document Upload (.docx only)</Label>
+                <FileUploader 
+                  onFileSelected={handleFileChange} 
+                  accept=".docx" 
+                  ref={fileInputRef}
+                />
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2 pt-4">
+                <Button 
+                  className="flex-1 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700"
+                  onClick={handleProcessDocument} 
+                  disabled={isProcessing || !file}
+                >
+                  Process Document
+                </Button>
+                <Button 
+                  className="flex-1" 
+                  variant="outline"
+                  onClick={handleDownload}
+                  disabled={isProcessing || tasks.length === 0}
+                >
+                  Download Results
+                </Button>
+                <Button
+                  className="flex-1"
+                  variant="secondary"
+                  onClick={resetForm}
+                  disabled={isProcessing}
+                >
+                  Reset
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+
+          <div className="space-y-4">
+            {isProcessing ? (
+              <ProcessingIndicator />
+            ) : tasks.length > 0 ? (
+              <TaskPreview tasks={tasks} documentTitle={docTitle || assemblyName} />
+            ) : (
+              <Card className="h-full">
+                <CardHeader className="bg-gradient-to-r from-gray-200 via-gray-100 to-gray-200 text-gray-600">
+                  <CardTitle>Upload and Process a Document</CardTitle>
+                </CardHeader>
+                <CardContent className="flex items-center justify-center h-64 text-center text-gray-500">
+                  <p>
+                    Upload a Word document (.docx) and click "Process Document" to extract tasks and images.
+                    <br /><br />
+                    The results will appear here.
+                  </p>
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
-      </footer>
+      </main>
+
+      <Footer />
     </div>
   );
 };

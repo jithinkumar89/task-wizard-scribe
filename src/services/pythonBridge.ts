@@ -9,6 +9,7 @@ interface PythonProcessResponse {
   images_count?: number;
   excel_path?: string;
   zip_path?: string;
+  type?: string;
 }
 
 // Since we can't directly run Python in browser, we simulate an API call
@@ -18,7 +19,8 @@ export const processPythonDocument = async (
   assemblySequenceId: string,
   assemblyName: string,
   figureStartRange: number,
-  figureEndRange: number
+  figureEndRange: number,
+  type: string = ""
 ): Promise<{
   tasks: Task[];
   docTitle: string;
@@ -36,6 +38,7 @@ export const processPythonDocument = async (
     formData.append('assemblyName', assemblyName);
     formData.append('figureStart', figureStartRange.toString());
     formData.append('figureEnd', figureEndRange.toString());
+    formData.append('type', type);
     
     // This is where you'd normally make an API call like:
     // const response = await fetch('/api/process-document', {
@@ -48,7 +51,8 @@ export const processPythonDocument = async (
       assemblySequenceId,
       assemblyName,
       figureStartRange,
-      figureEndRange
+      figureEndRange,
+      type
     });
     
     // For the demo version, since we can't run Python in the browser,
