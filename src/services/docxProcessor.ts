@@ -1,4 +1,3 @@
-
 import * as mammoth from 'mammoth';
 import { Document, Packer, Paragraph, Table, TableRow, TableCell, TextRun } from 'docx';
 import { saveAs } from 'file-saver';
@@ -76,10 +75,7 @@ export const processDocument = async (file: File, assemblySequenceId: string = '
     // Also extract images using HTML conversion
     const imageResult = await mammoth.convertToHtml({
       arrayBuffer: await file.arrayBuffer(),
-      // Set a high transformation limit to handle large documents
-      transformDocument: mammoth.transforms.paragraph(paragraph => {
-        return paragraph;
-      })
+      // Remove the transformDocument property as it's causing type errors
     });
 
     console.log("Document text extracted successfully");
@@ -303,7 +299,17 @@ const extractTasks = (
   let currentTask = '';
   let lastFoundTaskNum = 0;
   
-  for (const line of lines) {
+  // Filter out header rows at the beginning
+  let startIndex = 0;
+  for (let i = 0; i < Math.min(5, lines.length); i++) {
+    if (isHeaderRow(lines[i])) {
+      startIndex = i + 1;
+    }
+  }
+  
+  // Process actual content lines
+  for (let i = startIndex; i < lines.length; i++) {
+    const line = lines[i];
     const trimmedLine = line.trim();
     
     // Skip empty lines or header-like lines
@@ -330,7 +336,7 @@ const extractTasks = (
           task_no: formatted, 
           type: 'Operation',
           eta_sec: '',
-          description: trimmedLine.substring(stepMatch[0].length).trim(),
+          description: docTitle, // Use document title as description
           activity: currentTask.trim(),
           specification: '',
           attachment: '',
@@ -355,7 +361,7 @@ const extractTasks = (
             task_no: formatted,
             type: 'Operation',
             eta_sec: '',
-            description: '[Missing Task]',
+            description: docTitle, // Use document title as description
             activity: '[This task was not found in the document]',
             specification: '',
             attachment: '',
@@ -379,7 +385,7 @@ const extractTasks = (
       task_no: formatted,
       type: 'Operation',
       eta_sec: '',
-      description: currentTask.trim(),
+      description: docTitle, // Use document title as description
       activity: currentTask.trim(),
       specification: '',
       attachment: '',
@@ -446,7 +452,7 @@ const extractTasksAggressively = (
         task_no: formatted,
         type: 'Operation',
         eta_sec: '',
-        description: restOfText,
+        description: docTitle, // Use document title as description
         activity: restOfText,
         specification: '',
         attachment: '',
@@ -471,7 +477,7 @@ const extractTasksAggressively = (
         task_no: formatted,
         type: 'Operation',
         eta_sec: '',
-        description: paragraph.trim().split('\n')[0], // Use first line as description
+        description: docTitle, // Use document title as description
         activity: paragraph.trim(),
         specification: '',
         attachment: '',
@@ -485,7 +491,7 @@ const extractTasksAggressively = (
   return tasks;
 };
 
-// Extract tasks from table-structured content with improved parsing
+// Extract tasks from table-structured content with improved table parsing
 const extractTasksFromTable = (
   content: string,
   docTitle: string,
@@ -499,7 +505,7 @@ const extractTasksFromTable = (
   
   // First pass to identify header row(s)
   const headerLines: number[] = [];
-  for (let i = 0; i < Math.min(10, lines.length); i++) {
+  for (let i = 0; i < Math.min(15, lines.length); i++) {
     if (isHeaderRow(lines[i])) {
       headerLines.push(i);
       console.log(`Identified header at line ${i}: ${lines[i]}`);
@@ -563,7 +569,7 @@ const extractTasksFromTable = (
         task_no: formatted,
         type: 'Operation',
         eta_sec: '',
-        description: activityContent,
+        description: docTitle, // Use document title as description
         activity: activityContent,
         specification: '',
         attachment: '',
