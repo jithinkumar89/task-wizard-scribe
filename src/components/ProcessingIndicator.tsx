@@ -3,15 +3,15 @@ import React from 'react';
 import { Progress } from '@/components/ui/progress';
 import { FileText, CheckCircle, AlertCircle } from 'lucide-react';
 
-type ProcessingStatus = 'parsing' | 'extracting' | 'generating' | 'complete' | 'error';
+export type ProcessingStatus = 'parsing' | 'extracting' | 'generating' | 'complete' | 'error';
 
-interface ProcessingIndicatorProps {
+export interface ProcessingIndicatorProps {
   status: ProcessingStatus;
   progress: number;
   error?: string;
 }
 
-const ProcessingIndicator = ({ status, progress, error }: ProcessingIndicatorProps) => {
+const ProcessingIndicator = ({ status = 'parsing', progress = 50, error }: ProcessingIndicatorProps) => {
   const getStatusText = () => {
     switch (status) {
       case 'parsing':

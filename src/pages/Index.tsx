@@ -173,7 +173,7 @@ const Index = () => {
                 <Label htmlFor="assemblyName">Assembly Name</Label>
                 <Input
                   id="assemblyName"
-                  placeholder="e.g., Engine Assembly"
+                  placeholder="e.g., Unit Assembly"
                   value={assemblyName}
                   onChange={(e) => setAssemblyName(e.target.value)}
                 />
@@ -183,7 +183,7 @@ const Index = () => {
                 <Label htmlFor="type">Type</Label>
                 <Input
                   id="type"
-                  placeholder="e.g., Maintenance, Installation, etc."
+                  placeholder="e.g., Operation, Approval, QC"
                   value={type}
                   onChange={(e) => setType(e.target.value)}
                 />
@@ -217,7 +217,7 @@ const Index = () => {
               <div>
                 <Label>Document Upload (.docx only)</Label>
                 <FileUploader 
-                  onFileSelected={handleFileChange} 
+                  onFileSelect={handleFileChange} 
                   accept=".docx" 
                   ref={fileInputRef}
                 />
@@ -253,7 +253,7 @@ const Index = () => {
 
           <div className="space-y-4">
             {isProcessing ? (
-              <ProcessingIndicator />
+              <ProcessingIndicator status="parsing" progress={50} />
             ) : tasks.length > 0 ? (
               <TaskPreview tasks={tasks} documentTitle={docTitle || assemblyName} />
             ) : (
